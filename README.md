@@ -12,9 +12,9 @@ In other terms it is an
 * implemented as a single powershell script
 * exporting the Certificates in various formats (Pfx, Pkcs12, Pem)
 * compatible with every decent web server
-* needs just a single line of code to execute
-* doesn't fiddle with your holy web server configuration (only take input and produce Certificates)
-* runs out of the box without any additional requirements (no extra module directory / dll / c# code / buncy castle / openssl)
+* needs just a single line of code for setup and execution
+* doesn't fiddle with your holy web server configuration (only takes input and outputs Certificates)
+* runs out of the box without any additional requirements (no extra module directory / dll / c# code / Bouncy Castle / openssl)
 * uses only Windows components
 * in-place Certificate renewel doesn't need config changes of IIS bindings
 * uses Windows CNG API for handling private keys
