@@ -793,7 +793,7 @@ Begin {
             Write-Host " + Already validated!"
         } elseif ($challenge.status -eq "pending") {
             $token = "$($challenge.token).$(Get-Thumbprint)"
-            &$onChallenge "$($challenge.token)" "$token" "$Domain"
+            &$onChallenge "$($challenge.token)" "$token" "$Domain" | Out-Null
 
             Write-Host " + Responding to challenge for $($Domain)..."
             $resp = Invoke-SignedWebRequest -Uri $challenge.uri -Resource 'challenge' -Payload @{
