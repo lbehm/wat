@@ -712,12 +712,7 @@ Begin {
         if (-not ([System.IO.DirectoryInfo] "$AccountDir\$CAHASH").Exists) { New-Item -Type Directory -Path "$AccountDir\$CAHASH" -Force | Out-Null }
     }
     function Verify-Certificate([String] $Domain, [String[]] $SAN) {
-        if ($RenewCertificate) {
-            return $false
-        }
-        if ($RecreateCertificate) {
-            return $false
-        }
+        if ($ResetRegistration -or $RenewCertificate -or $RecreateCertificate) { return $false }
         
         $cert = Get-LastCertificate -Domain $Domain
         
