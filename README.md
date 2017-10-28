@@ -22,7 +22,7 @@ In other terms it is an
 * is more or less readable
 * a useful way to show off some powershell skills
 
-# Acknowledgement
+## Acknowledgement
 At this point I want to thank @lukas2511 for his fantastic work in [dehydrated](https://github.com/lukas2511/dehydrated):bangbang:\
 Without his inspirational masterpiece there would be no wat.ps1
 If you looking for a trustworthy slim acme client for linux/unix check out his works!
