@@ -2,17 +2,28 @@
 
 wat.ps1 contains all the magic it needs to give you just what you want: free SSL/TLS Certificates for all your servers
 
-In other terms it is a
+In other terms it is an
 * ACME client
-* running on windows
-* that generates RSA and ECDsa Certificates
+* running on Windows (tested on Server 2012R2, Win10v1703)
+* that generates and renews RSA and ECDsa Certificates
 * signed by an ACME-server like [Let'sEncrypt](https://letsencrypt.org/)
 * implemented as a single powershell script
-* runs out of the box without any additional requirements (no extra module directory / dll / c# code / buncy castle / openssl )
+* exporting the Certificates in various formats (Pfx, Pkcs12, Pem)
+* compatible with every decent web server
+* needs just a single line of code to execute
+* doesn't fiddle with your holy web server configuration (only take input and produce Certificates)
+* runs out of the box without any additional requirements (no extra module directory / dll / c# code / buncy castle / openssl)
 * uses only Windows components
+* in-place Certificate renewel doesn't need config changes of IIS bindings
 * uses Windows CNG API for handling private keys
 * just what a serious network admin wants
+* is more or less readable
 * a useful way to show off some powershell skills
+
+# Acknowledgement
+At this point I want to thank @lukas2511 for his fantastic work in [dehydrated](https://github.com/lukas2511/dehydrated):bangbang:\
+Without his inspirational masterpiece there would be no wat.ps1
+If you looking for a trustworthy slim acme client for linux/unix check out his works!
 
 ## Syntax
 ```

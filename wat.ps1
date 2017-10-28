@@ -170,7 +170,7 @@ Param (
     [Switch] $NoLock,
 
     # Password to encrypt the exported certificate files (only applies to -ExportPfx -ExportPkcs12)
-    [securestring] $ExportPassword = [System.Security.SecureString]::new(),
+    [securestring] $ExportPassword = (new-object System.Security.SecureString),
 
     # Export the certificate in PFX format (please use -ExportPassword)
     [Switch] $ExportPfx,
@@ -196,16 +196,9 @@ Param (
     [ValidateSet("Unicode", "UTF7", "UTF8", "UTF32", "ASCII", "BigEndianUnicode", "Default", "OEM", "Unicode")]    
     [string] $ExportPemEncoding = "ASCII",
 
-    [Parameter(DontShow = $true)]
-    [Switch] $AutoCleanup,
-
     # Script to be invoked with challenge token
     [Parameter(DontShow = $true)]
     [System.Management.Automation.ScriptBlock] $onChallenge,
-
-    # Script to be invoked with issued [X509Certificate2] certificate
-    [Parameter(DontShow = $true)]
-    [System.Management.Automation.ScriptBlock] $onComplete,
     
     # Internal identifier of the ACME account
     [Parameter(DontShow = $true)]
@@ -244,7 +237,7 @@ Begin {
             [IO.File]::OpenWrite($Path).Close()
             $PID | Out-File $Path
         } catch {
-            throw "LOCKFILE $Path is not writable, aborting."
+            die "LOCKFILE $Path is not writable, aborting."
         }
     }
     function Remove-Lock([System.IO.FileInfo] $Path = $LockFile) {
@@ -390,7 +383,7 @@ Begin {
 
             if (-not $ret) { throw "Can't acquire NCRYPT private key" }
 
-            [System.Security.Cryptography.CngKey] $cngkey = [System.Security.Cryptography.CngKey]::Open($key, [System.Security.Cryptography.CngKeyOpenOptions]::None)
+            [System.Security.Cryptography.CngKey] $cngkey = [System.Security.Cryptography.CngKey]::Open($key, [System.Security.Cryptography.CngKeyHandleOpenOptions]::None)
             if ($cngkey -eq $null) { throw "Can't acquire private CngKey" }
             $cngkey
         }
@@ -407,8 +400,9 @@ Begin {
                 $key = Get-CngPrivateKeyFromCertificate -Cert $Cert
 
                 switch ($key.AlgorithmGroup.AlgorithmGroup) {
-                    RSA { ConvertRSATo-Pem -PrivateKey ([System.Security.Cryptography.RSACng]::new($key)) }
-                    ECDSA { ConvertECDsaTo-Pem -PrivateKey ([System.Security.Cryptography.ECDsaCng]::new($key)) }
+                    RSA { ConvertRSATo-Pem -PrivateKey (New-Object -TypeName System.Security.Cryptography.RSACng -ArgumentList ($key)) }
+                    ECDSA { ConvertECDsaTo-Pem -PrivateKey (New-Object -TypeName System.Security.Cryptography.ECDsaCng -ArgumentList ($key)) }
+                    ECDH { Write-Warning "! Exports of EC Certificates in PEM format isn't supported on your system." }
                 }
             } else { ConvertRSATo-Pem -PrivateKey $key }
         }
@@ -561,11 +555,11 @@ Begin {
                     $config.agreement = $License
                     Set-AccountConfig -Config $config -Save
                 } else {
-                    throw "The terms of service changed.`nTo use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
+                    die "The terms of service changed.`nTo use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
                 }
             }
         } elseif (!$AcceptTerms) {
-            throw "To use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
+            die "To use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
         }
     }
     function Verify-ACMERegistration {
@@ -596,32 +590,30 @@ Begin {
 
             $resp = Invoke-SignedWebRequest -Uri $Directory.newAccount -Resource new-reg -Payload $req
         } catch [System.Net.WebException] {
-            Write-Error -Message $_.ErrorDetails.Message
             if ($_.ErrorDetails.Message.IndexOf("Registration key is already in use") -ge 0) {
-                throw "Registration key is already in use. Use -RenewRegistration"
+                die "Registration key is already in use. Use -RenewRegistration"
             } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
-                throw "E-Mail domain verification failed! Check your e-mail address!"
+                die "E-Mail domain verification failed! Check your e-mail address!"
             } else {
-                throw "Can't register"
+                throw $_
             }
         }
         $resp.agreement = $Directory.termsOfService
         Set-AccountConfig -Config $resp
     }
     function Update-ACMERegistration {
-        $Config = Get-AccountConfig | ConvertTo-Hashtable
+        $config = Get-AccountConfig | ConvertTo-Hashtable
         try {
-            $resp = Invoke-SignedWebRequest -Uri ($Directory.account + $Config.id) -Resource reg -Payload $Config
+            $resp = Invoke-SignedWebRequest -Uri ($Directory.account + $config.id) -Resource reg -Payload $config
         } catch [System.Net.WebException] {
-            Write-Error -Message $_.ErrorDetails.Message
             if ($_.ErrorDetails.Message.IndexOf("Registration key is already in use") -ge 0) {
-                throw "Registration key is already in use. Use -RenewRegistration"
+                die "Registration key is already in use. Use -RenewRegistration"
             } elseif ($_.ErrorDetails.Message.IndexOf("Registration ID must be an integer") -ge 0) {
-                throw "Local account data is corrupt. Please recreate account with -ResetRegistration"
+                die "Local account data is corrupt. Please recreate account with -ResetRegistration"
             } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
-                throw "E-Mail domain verification failed! Check your e-mail address!"
-            } else {} else {
-                throw "Can't update registration"
+                die "E-Mail domain verification failed! Check your e-mail address!"
+            } else {
+                throw $_
             }
         }
         Set-AccountConfig -Config $resp
@@ -706,24 +698,20 @@ Begin {
             $Algo.ComputeHash(
                 [System.Text.Encoding]::UTF8.GetBytes(
                     '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}'
-
-                    <#(ConvertTo-Json -Compress -InputObject (@{
-                        kty = "RSA";
-                        e = (Encode-UrlBase64 -Bytes $export.Exponent);
-                        n = (Encode-UrlBase64 -Bytes $export.Modulus);
-                    }))
-                    #>
                 )
             )
         )
     }
     function Verify-Config() {
-        if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) {throw "Challenge type dns-01 needs a hook script for deployment... cannot continue."}
-        if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $COMMAND -ne "register") {throw "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions."}
-        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 1024) {throw "KeyAlgo is Rsa: KeySize must be at least 1024."}
-        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 2048) {Write-Host " ! KeyAlgo is Rsa: KeySize should be at least 2048."}
+        if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { die "Challenge type dns-01 needs a -onChallenge script for deployment... can't continue." }
+        if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
+        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 1024) { die "KeyAlgo is Rsa: KeySize must be at least 1024." }
+        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 2048) { Write-Host " ! KeyAlgo is Rsa: KeySize should be at least 2048." }
     
-        if (!$BaseDir.Exists) {throw "BaseDir does not exist: $BaseDir"}
+        # Creating Directories
+        if (-not $BaseDir.Exists) { die "BaseDir does not exist: $BaseDir" }
+        if (-not $CertDir.Exists) { New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null }
+        if (-not ([System.IO.DirectoryInfo] "$AccountDir\$CAHASH").Exists) { New-Item -Type Directory -Path "$AccountDir\$CAHASH" -Force | Out-Null }
     }
     function Verify-Certificate([String] $Domain, [String[]] $SAN) {
         if ($RenewCertificate) {
@@ -825,7 +813,7 @@ Begin {
             if ($resp.status -eq "valid") {
                 Write-Host " + Challenge is valid!"
             } elseif ($resp.status -eq "invalid") {
-                throw ("Challenge is invalid`n" + $resp.error)
+                die ("Challenge is invalid`n" + $resp.error)
             }
         }
     }
@@ -961,7 +949,7 @@ Begin {
         $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
 
         # todo: replace the next line with something more accurate
-        # mybe $enroll.Certificate is helpful
+        # maybe $enroll.Certificate is helpful
         Get-LastCertificate -Domain $Domain
     }
     function Renew-Certificate([System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert) {
@@ -1016,6 +1004,7 @@ Begin {
             New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 ($bytes, "", ([System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet))
         }
     }
+    
     [string] $VERSION = "0.0.0.1"
     [string] $AppName = "WAT v$VERSION"
     [string] $UserAgent = "$AppName (ACME 1.0)"
@@ -1036,41 +1025,31 @@ Begin {
             "https://acme-v01.api.letsencrypt.org/directory"
         }
     }
+
     [String] $CAHASH = Encode-UrlBase64 -String $CA
     [System.Security.Cryptography.RSA] $AccountRsa = Get-RSACng
     
     [System.IO.FileInfo] $AccountConfig = "$AccountDir\$CAHASH\$InternalAccountIdentifier.json"
     
-    # Creating Directories
-    New-Item -Type Directory -Path "$AccountDir\$CAHASH" -Force | Out-Null
-    if (-not $CertDir.Exists) {
-        New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null
-    }
-    
     # Load CA / Directory Informations
     [hashtable] $Directory = Get-ACMEDirectory $CA -BoulderCompatibility
-
-    if ($onChallenge -eq $null) {
-        $onChallenge = {
-            Param(
-                [String] $Id,
-                [String] $Token,
-                [String] $Domain
-            )
-            $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding utf8
-            Write-Host "$($Domain): $Token"
-        }
-    }
 
     Create-Lock
     Verify-Config
     Verify-ACMELicense
     Verify-ACMERegistration
+
+    if ($onChallenge -eq $null) {
+        $onChallenge = {
+            Param([String] $Id, [String] $Token, [String] $Domain)
+            $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding utf8
+        }
+    }
 }
 Process {
     try {
         if ($Domains.Count -lt 1) {
-            throw "No Domains found in parameter"
+            die "No Domains found in parameter"
         }
     
         [String] $Domain = $Domains.Get(0)
@@ -1090,9 +1069,9 @@ Process {
         if ($ExportPfx) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).pfx", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $ExportPassword)) }
         if ($ExportPkcs12) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).p12", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $ExportPassword)) }
         if ($ExportCert) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).crt", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)) }
-        if ($ExportPem) { ConvertTo-PEM -Cert $Cert -Public -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).pem" -Encoding $ExportPemEncoding -NoNewline }
-        if ($ExportPemCert) { ConvertTo-PEM -Cert $Cert -Public|Out-File -FilePath "$($CertDir.FullName)\$($Domain).cert.pem" -Encoding $ExportPemEncoding -NoNewline }
-        if ($ExportPemKey) { ConvertTo-PEM -Cert $Cert -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).key.pem" -Encoding $ExportPemEncoding -NoNewline }
+        if ($ExportPem) { ConvertTo-PEM -Cert $Cert -Public -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemCert) { ConvertTo-PEM -Cert $Cert -Public|Out-File -FilePath "$($CertDir.FullName)\$($Domain).cert.pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemKey) { ConvertTo-PEM -Cert $Cert -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).key.pem" -Encoding $ExportPemEncoding }
 
         $Cert
     } catch { die -Message (Generate-ErrorMessage $_) }
