@@ -591,7 +591,7 @@ Begin {
             $resp = Invoke-SignedWebRequest -Uri $Directory.newAccount -Resource new-reg -Payload $req
         } catch [System.Net.WebException] {
             if ($_.ErrorDetails.Message.IndexOf("Registration key is already in use") -ge 0) {
-                die "Registration key is already in use. Use -RenewRegistration"
+                die "Registration key is already in use. Use -ResetRegistration"
             } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
                 die "E-Mail domain verification failed! Check your e-mail address!"
             } else {
@@ -606,9 +606,7 @@ Begin {
         try {
             $resp = Invoke-SignedWebRequest -Uri ($Directory.account + $config.id) -Resource reg -Payload $config
         } catch [System.Net.WebException] {
-            if ($_.ErrorDetails.Message.IndexOf("Registration key is already in use") -ge 0) {
-                die "Registration key is already in use. Use -RenewRegistration"
-            } elseif ($_.ErrorDetails.Message.IndexOf("Registration ID must be an integer") -ge 0) {
+            if ($_.ErrorDetails.Message.IndexOf("Registration ID must be an integer") -ge 0) {
                 die "Local account data is corrupt. Please recreate account with -ResetRegistration"
             } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
                 die "E-Mail domain verification failed! Check your e-mail address!"
