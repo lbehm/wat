@@ -75,7 +75,10 @@ For the use in certificates, private keys are generated in the Create-CSR functi
 
 #>
 Param (
-    # Specify a list of domain names. The first is used as CommonName of your certificate
+    # Specify a list of domain names.
+    # The first is used as CommonName of your certificate.
+    # Every domain name is added as SubjectAlternateName (SAN).
+    # The Domains parameter can also be provided as piped input. Please be sure to define arrays of string arrays in this case.
     [Parameter(
         Position = 0,
         Mandatory = $true,
