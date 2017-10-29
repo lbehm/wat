@@ -744,7 +744,7 @@ Begin {
     function Verify-Certificate([String] $Domain, [String[]] $SAN) {
         if ($ResetRegistration -or $RenewCertificate -or $RecreateCertificate) { return $false }
         
-        $cert = Get-LastCertificate -Domain $Domain
+        $cert = Get-LastCertificate -Domain $Domain -SAN $SAN
         
         if ($cert -eq $null) {
             Write-Host " ! Can't find existing certificate. Creating new..."
@@ -800,17 +800,22 @@ Begin {
         # passed all checks
         return $true
     }
-    function Get-LastCertificate([String] $Domain) {
-        # todo filter SAN
+    function Get-CertificateFriendlyName([String] $Domain) { "$($Domain) - $($CAHASH)" }
+    function Get-LastCertificate([String] $Domain, [string[]] $SAN) {
         [System.Security.Cryptography.X509Certificates.X509Certificate2](gci "Cert:\$($Context)\My" |? {
-            $_.FriendlyName -eq $Domain -and $_.HasPrivateKey
+            $_.FriendlyName -eq (Get-CertificateFriendlyName $Domain) -and 
+            $_.HasPrivateKey -and
+            (
+                (($SAN -eq $null -or $SAN.Count -eq 0) -and $_.DnsNameList.Count -eq 1) -or
+                ($SAN -ne $null -and ($SAN.Count +1) -eq $_.DnsNameList.Count -and ([string[]]($_.DnsNameList|? {$SAN.IndexOf($_) -ge 0 -or $_ -eq $Domain})).Count -eq $_.DnsNameList.Count)
+            )
         }|Sort-Object -Property NotAfter|Select-Object -Last 1)
     }
     function Sign-Domain([String] $Domain, [String[]] $SAN) {
         Verify-ACMEAuthorization $Domain
         if ($SAN -ne $null) {$SAN|% {Verify-ACMEAuthorization $_}}
 
-        [System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert = Get-LastCertificate -Domain $Domain
+        [System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert = Get-LastCertificate -Domain $Domain -SAN $SAN
         
         if ($RecreateCertificate -or
             $OldCert -eq $null -or
@@ -976,7 +981,7 @@ Begin {
         $enroll = New-Object -ComObject X509Enrollment.CX509Enrollment
         $enroll.InitializeFromRequest($request)
         
-        $enroll.CertificateFriendlyName = $Domain
+        $enroll.CertificateFriendlyName = Get-CertificateFriendlyName $Domain
         $enroll.CertificateDescription = ("Generated with " + $AppName)
         
         # Creates Request in cert store and stores private key
@@ -989,7 +994,7 @@ Begin {
 
         # todo: replace the next line with something more accurate
         # maybe $enroll.Certificate is helpful
-        Get-LastCertificate -Domain $Domain
+        Get-LastCertificate -Domain $Domain -SAN $SAN
     }
     function Renew-Certificate([System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert) {
         Write-Host " + Creating renewal request. Based on $($OldCert.Thumbprint)"
@@ -1024,7 +1029,7 @@ Begin {
         $enroll = New-Object -ComObject X509Enrollment.CX509Enrollment
         $enroll.InitializeFromRequest($request)
         
-        $enroll.CertificateFriendlyName = $Domain
+        $enroll.CertificateFriendlyName = Get-CertificateFriendlyName $Domain
         $enroll.CertificateDescription = ("Generated with " + $AppName)
         
         # Creates Request in cert store and stores private key
@@ -1032,7 +1037,7 @@ Begin {
 
         $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
 
-        Get-LastCertificate -Domain $Domain
+        Get-LastCertificate -Domain $Domain -SAN $SAN
     }
     function Sign-CSR([String] $CSR, [Switch] $AsDER) {
         [byte[]]$bytes = Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{
@@ -1099,7 +1104,7 @@ Process {
     
         [System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert = if (Verify-Certificate -Domain $Domain -SAN $SAN) {
             # Cert didn't changed just return existing
-            Get-LastCertificate -Domain $Domain
+            Get-LastCertificate -Domain $Domain -SAN $SAN
         } else {
             # Need to create new cert
             Sign-Domain -Domain $Domain -SAN $SAN
