@@ -205,6 +205,10 @@ Param (
     # Script to be invoked with challenge token
     [Parameter(DontShow = $true)]
     [System.Management.Automation.ScriptBlock] $onChallenge,
+
+    # Script to be invoked after challenge
+    [Parameter(DontShow = $true)]
+    [System.Management.Automation.ScriptBlock] $onChallengeCleanup,
     
     # Internal identifier of the ACME account
     [Parameter(DontShow = $true)]
@@ -738,7 +742,7 @@ Begin {
         )
     }
     function Verify-Config() {
-        if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { die "Challenge type dns-01 needs a -onChallenge script for deployment... can't continue." }
+        if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { Write-Host " ! Challenge type dns-01 should be used with an automated -onChallenge script for deployment." }
         if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
 
         # Creating Directories
@@ -860,7 +864,16 @@ Begin {
             Write-Host " + Already validated!"
         } elseif ($challenge.status -eq "pending") {
             $token = "$($challenge.token).$(Get-Thumbprint)"
-            &$onChallenge "$($challenge.token)" "$token" "$Domain" | Out-Null
+
+            switch ($ChallengeType) {
+                'http-01' {
+                    &$onChallenge "$($challenge.token)" "$token" "$Domain" | Out-Null
+                }
+                'dns-01' {
+                    $token = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($token)))
+                    &$onChallenge "$token" "$Domain" | Out-Null
+                }
+            }
 
             Write-Host " + Responding to challenge for $($Domain)..."
             $resp = Invoke-SignedWebRequest -Uri $challenge.uri -Resource 'challenge' -Payload @{
@@ -1071,7 +1084,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.2.2.0"
+    [string] $VERSION = "0.2.2.1"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1110,9 +1123,22 @@ Begin {
     Verify-ACMERegistration
 
     if ($onChallenge -eq $null) {
-        $onChallenge = {
-            Param([String] $Id, [String] $Token, [String] $Domain)
-            $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding ascii
+        switch ($ChallengeType) {
+            'http-01' {
+                $onChallenge = {
+                    Param([String] $Id, [String] $Token, [String] $Domain)
+                    $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding ascii
+                }
+            }
+            'dns-01' {
+                # manual dns challenge handling - for testing purposes only
+                $onChallenge = {
+                    Param([String] $Token, [String] $Domain)
+                    Write-Host "Please deploy a DNS TXT record under the name '_acme-challenge.$($Domain)' with the following value: $($Token)"
+                    Write-Host "Once this is deployed, press Enter to continue"
+                    Read-Host
+                }
+            }
         }
     }
 }
