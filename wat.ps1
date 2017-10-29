@@ -67,6 +67,12 @@ Certificate 2:
 Name: jon.doe.xy
 Domains: jon.doe.xy
 
+.EXAMPLE
+C:\Scripts\wat\wat.ps1 -Domains "example.com" -WellKnown C:\inetpub\well-known\acme-challenge -AcceptTerms -AutoFix -Context LocalMachine
+This is my entire config (as scheduled task) to update the SMTP Certificate in one of my ExchangeServers.
+After the initial set up and binding of the Certificat to the SMTP service (e.g. in the ECP GUI), I don't have to update any ExchangeServer configuration every time the certificate is renewed.
+That's what I call In-Place-Renewal - I didn't find anything on the web to this mechanism.
+
 .NOTES
 This script uses only Windows components
 
