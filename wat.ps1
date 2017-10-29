@@ -1025,7 +1025,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.0.0.1"
+    [string] $VERSION = "0.1.0.0"
     [string] $AppName = "WAT v$VERSION"
     [string] $UserAgent = "$AppName (ACME 1.0)"
 
