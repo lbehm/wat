@@ -29,7 +29,7 @@ If you looking for a trustworthy slim acme client for linux/unix check out his w
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo <CngAlgorithm>] [-KeySize <Int32>] [-RenewDays <Int32>] [-ChallengeType <String>] [-ACMEVersion <String>] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding <String>] [-onChallenge <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [1024|2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 
 For detailed informations, just go ahead:
@@ -49,46 +49,46 @@ ContactEmail <String>
 Contact <String[]>
 	Contact information to use during the registration (example: "mailto:me@example.com")
 
-ResetRegistration [<SwitchParameter>]
+ResetRegistration
 	Discards the ACME account key and performs a complete new account registration
 
-RenewRegistration [<SwitchParameter>]
+RenewRegistration
 	Force update of the account information (maybe you fiddled with the account.json file)
 
-RenewCertificate [<SwitchParameter>]
+RenewCertificate
 	Force renew of certificate even if it is longer valid than value in RenewDays
 
-RecreateCertificate [<SwitchParameter>]
+RecreateCertificate
 	Create complete new private key and certificate (useful when changing -KeyAlgo)
 
-RenewPrivateKey [<SwitchParameter>]
+RenewPrivateKey
 	Regenerate private keys instead of just signing new certificates on renewal
 
-OcspMustStaple [<SwitchParameter>]
-	Option to add CSR-flag indicating OCSP stapling to be mandatory
+OcspMustStaple
+	Adding CSR feature indicating that OCSP stapling should be mandatory
 
 CA <Uri>
 	Path to certificate authority (default: https://acme-v01.api.letsencrypt.org/directory)
 
-AcceptTerms [<SwitchParameter>]
+AcceptTerms
 	Accept CAs terms of service
 
-Staging [<SwitchParameter>]
+Staging
 	Using the staging environment of Let'sEncrypt if -CA isn't specified
 
-KeyAlgo <CngAlgorithm>
-	Which public key algorithm should be used? (use with -RecreateCertificate)
+KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]
+	Which algorithm should be used? (use with -RecreateCertificate)
 
-KeySize <Int32>
-	Keysize for private rsa keys (default: 4096)
+KeySize [1024|2048|4096]
+	Size of rsa keys (default: 4096)
 
 RenewDays <Int32>
 	Minimum days before expiration to automatically renew certificate (default: 30)
 
-ChallengeType <String>
+ChallengeType [http-01|dns-01]
 	Which challenge should be used? (default: http-01)
 
-ACMEVersion <String>
+ACMEVersion [acme1-boulder|acme2-boulder|acme1]
 	Currently only acme1-boulder dialect is tested
 
 BaseDir <DirectoryInfo>
@@ -106,33 +106,33 @@ WellKnown <DirectoryInfo>
 LockFile <FileInfo>
 	Lockfile location, to prevent concurrent access
 
-NoLock [<SwitchParameter>]
+NoLock
 	Don't use lockfile (potentially dangerous!)
 
 ExportPassword <SecureString>
-	Password to encrypt the exported certificate files (only applies to -ExportPfx -ExportPkcs12)
+	Password to encrypt the exported certificate files (only applies to -ExportPfx and -ExportPkcs12)
 
-ExportPfx [<SwitchParameter>]
+ExportPfx
 	Export the certificate in PFX format (please use -ExportPassword)
 
-ExportPkcs12 [<SwitchParameter>]
+ExportPkcs12
 	Export the certificate in Pkcs12 format (please use -ExportPassword)
 
-ExportCert [<SwitchParameter>]
+ExportCert
 	Export the certificate as a .crt public certificate file (Only public certificate without private key)
 
-ExportPem [<SwitchParameter>]
+ExportPem
 	Export the certificate with private key in Base64 encoded PEM format (Warning: private key is NOT encrypted)
 
-ExportPemCert [<SwitchParameter>]
+ExportPemCert
 	Export the certificate without private key in Base64 encoded PEM format
 
-ExportPemKey [<SwitchParameter>]
+ExportPemKey
 	Export the private key in Base64 encoded PEM format (Warning: private key is NOT encrypted)
 
-ExportIssuerPem [<SwitchParameter>]
+ExportIssuerPem
 
-ExportPemEncoding <String>
+ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]
 
 onChallenge <ScriptBlock>
 	Script to be invoked with challenge token

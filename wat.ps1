@@ -101,7 +101,6 @@ Param (
     [Switch] $RenewRegistration,
     
     # Force renew of certificate even if it is longer valid than value in RenewDays
-    [Alias("x")]
     [Switch] $RenewCertificate,
     
     # Create complete new private key and certificate (useful when changing -KeyAlgo)
@@ -111,7 +110,7 @@ Param (
     # Regenerate private keys instead of just signing new certificates on renewal
     [Switch] $RenewPrivateKey,
     
-    # Option to add CSR-flag indicating OCSP stapling to be mandatory
+    # Adding CSR feature indicating that OCSP stapling should be mandatory
     [Switch] $OcspMustStaple,
 
     # Path to certificate authority (default: https://acme-v01.api.letsencrypt.org/directory)
@@ -124,11 +123,11 @@ Param (
     # Using the staging environment of Let'sEncrypt if -CA isn't specified
     [Switch] $Staging,
     
-    # Which public key algorithm should be used? (use with -RecreateCertificate)
+    # Which algorithm should be used? (use with -RecreateCertificate)
     [ValidateSet("Rsa", "ECDSA_P256", "ECDSA_P384")]
     [System.Security.Cryptography.CngAlgorithm] $KeyAlgo = "Rsa",
     
-    # Keysize for private rsa keys (default: 4096)
+    # Size of rsa keys (default: 4096)
     [ValidateSet(1024, 2048, 4096)]
     [int] $KeySize = 4096,
     
@@ -136,7 +135,6 @@ Param (
     [int] $RenewDays = 30,
 
     # Which challenge should be used? (default: http-01)
-    [Alias("t")]
     [ValidateSet("http-01", "dns-01")]
     [String] $ChallengeType = "http-01",
 
@@ -165,10 +163,9 @@ Param (
     [System.IO.FileInfo] $LockFile = "$BaseDir\lock",
     
     # Don't use lockfile (potentially dangerous!)
-    [Alias("n")]
     [Switch] $NoLock,
 
-    # Password to encrypt the exported certificate files (only applies to -ExportPfx -ExportPkcs12)
+    # Password to encrypt the exported certificate files (only applies to -ExportPfx and -ExportPkcs12)
     [securestring] $ExportPassword = (new-object System.Security.SecureString),
 
     # Export the certificate in PFX format (please use -ExportPassword)
@@ -192,7 +189,7 @@ Param (
     [Parameter(DontShow = $true)]
     [Switch] $ExportIssuerPem,
 
-    [ValidateSet("Unicode", "UTF7", "UTF8", "UTF32", "ASCII", "BigEndianUnicode", "Default", "OEM", "Unicode")]    
+    [ValidateSet("ASCII", "UTF8", "UTF32", "UTF7", "BigEndianUnicode", "Default", "OEM", "Unicode")]
     [string] $ExportPemEncoding = "ASCII",
 
     # Script to be invoked with challenge token
