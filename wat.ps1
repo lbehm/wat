@@ -263,7 +263,8 @@ Begin {
         try {
             $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
         } catch [System.Net.WebException] {
-            if ($_.ErrorDetails.Message.IndexOf("No registration exists matching provided key") -ge 0) {
+            if ($_.ErrorDetails.Message.IndexOf("No registration exists matching provided key") -ge 0 -or
+                $_.ErrorDetails.Message.IndexOf("Request signing key did not match registration key") -ge 0) {
                 if ($AutoFix) { # Account is lost due to mismatching account key
                     Create-ACMERegistration (Get-AccountConfig|ConvertTo-Hashtable)
                     $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
