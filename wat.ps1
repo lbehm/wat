@@ -1082,7 +1082,7 @@ Begin {
     if ($onChallenge -eq $null) {
         $onChallenge = {
             Param([String] $Id, [String] $Token, [String] $Domain)
-            $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding utf8
+            $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding ascii
         }
     }
 }
