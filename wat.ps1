@@ -203,6 +203,11 @@ Param (
     [Parameter(DontShow = $true)]
     [String] $InternalAccountIdentifier = "ACMEDefaultAccount",
 
+    # Try to fix common problems automatically.
+    # This includes:
+    # - Creating new account with existing configuration if AccountKey is missing (this overwrites account id/data)
+    [Switch] $AutoFix,
+
     # The place to save the certificate and keys
     [System.Security.Cryptography.X509Certificates.StoreLocation] $Context = [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
 )
@@ -216,9 +221,10 @@ Begin {
     }
     function Generate-ErrorMessage([System.Management.Automation.ErrorRecord]$Exception) {
         $FullDescription = "$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
+        $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
+        if ($Exception.ErrorDetails.Message) { $FullDescription += "`$($Exception.ErrorDetails.Message)"}
         $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
         $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
-        $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
         $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
         $FullDescription
     }
@@ -253,8 +259,20 @@ Begin {
         }
         $body.signature = Get-JWSignature -Value "$($body.protected).$($body.payload)"
         [String] $json = ConvertTo-Json -InputObject $body -Compress
-    
-        $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
+        
+        try {
+            $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
+        } catch [System.Net.WebException] {
+            if ($_.ErrorDetails.Message.IndexOf("No registration exists matching provided key") -ge 0) {
+                if ($AutoFix) { # Account is lost due to mismatching account key
+                    Create-ACMERegistration (Get-AccountConfig|ConvertTo-Hashtable)
+                    $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
+                }
+                else { die "Local account data is corrupt. Please recreate account with -ResetRegistration" }
+            } else {
+                throw $_
+            }
+        }
         $resp.Content|ConvertFrom-Json
     }
     function Get-ACMENonce([uri] $Uri = $CA) {
@@ -299,7 +317,7 @@ Begin {
     
         $Directory
     }
-    function Get-RSACng([String] $Name = $InternalAccountIdentifier, [int] $Size = 4096) {
+    function Get-RSACng([String] $Name, [int] $Size = 4096) {
         if ($ResetRegistration -and [System.Security.Cryptography.CngKey]::Exists($Name)) {
             [System.Security.Cryptography.CngKey]::Open($Name).Delete()
         }
@@ -579,11 +597,13 @@ Begin {
             }
         }
     }
-    function Create-ACMERegistration {
+    function Create-ACMERegistration([hashtable] $Config) {
         try {
             $req = @{ agreement = $Directory.termsOfService; }
 
-            if ($Contact -ne $null) {
+            if ($Config -ne $null -and $Config.contact -ne $null) {
+                $req.contact = $Config.contact
+            } elseif ($Contact -ne $null) {
                 $req.contact = $Contact
             }
 
@@ -1023,7 +1043,7 @@ Begin {
     }
 
     [String] $CAHASH = Encode-UrlBase64 -String $CA
-    [System.Security.Cryptography.RSA] $AccountRsa = Get-RSACng
+    [System.Security.Cryptography.RSA] $AccountRsa = Get-RSACng -Name "$($CAHASH)$($InternalAccountIdentifier)"
     
     [System.IO.FileInfo] $AccountConfig = "$AccountDir\$CAHASH\$InternalAccountIdentifier.json"
     

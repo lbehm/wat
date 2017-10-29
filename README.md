@@ -109,6 +109,10 @@ Export the private key in Base64 encoded PEM format (Warning: private key is NOT
 Script to be invoked with challenge token
 ###### -InternalAccountIdentifier `<String>`
 Internal identifier of the ACME account
+###### -AutoFix
+Try to fix common problems automatically.\
+This includes:
+- Creating new account with existing configuration if AccountKey is missing (this overwrites account id/data)
 ###### -Context `[CurrentUser|LocalMachine]`
 The place to save the certificate and keys
 
