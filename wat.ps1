@@ -112,7 +112,6 @@ Param (
     [Switch] $RenewPrivateKey,
     
     # Option to add CSR-flag indicating OCSP stapling to be mandatory
-    [Parameter(DontShow = $true)]
     [Switch] $OcspMustStaple,
 
     # Path to certificate authority (default: https://acme-v01.api.letsencrypt.org/directory)
@@ -913,8 +912,12 @@ Begin {
         $request.X509Extensions.Add($extAlternativeNames)
     
         if ($OcspMustStaple) {
-            Write-Warning -Message "-OcspMustStaple isn't supported yet"
-            # can someone help me here, please? those RFCs are driving me crazy
+            # X509Extension(OID(1.3.6.1.5.5.7.1.24), SEQUENCE(INTEGER(5)))
+            $objectId = New-Object -ComObject X509Enrollment.CObjectId
+            $objectId.InitializeFromValue("1.3.6.1.5.5.7.1.24")
+            $ocsp = New-Object -ComObject X509Enrollment.CX509Extension
+            $ocsp.Initialize($objectId, 1, [System.Convert]::ToBase64String((Encode-ASN1Sequence(Encode-ASN1Integer 5))))
+            $request.X509Extensions.Add($ocsp)
         }
 
         # finish Pkcs10 request
