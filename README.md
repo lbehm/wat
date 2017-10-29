@@ -105,6 +105,7 @@ Export the certificate without private key in Base64 encoded PEM format
 ###### -ExportPemKey
 Export the private key in Base64 encoded PEM format (Warning: private key is NOT encrypted)
 ###### -ExportIssuerPem
+Export the certificate of the Issuer (e.g. Let'sEncrypt) in Base64 encoded PEM format
 ###### -ExportPemEncoding `[ASCII|UTF8|UTF32|Unicode|...]`
 ###### -onChallenge `<ScriptBlock>`
 Script to be invoked with challenge token

@@ -196,7 +196,7 @@ Param (
     # Export the private key in Base64 encoded PEM format (Warning: private key is NOT encrypted)
     [Switch] $ExportPemKey,
     
-    [Parameter(DontShow = $true)]
+    # Export the certificate of the Issuer (e.g. Let'sEncrypt) in Base64 encoded PEM format
     [Switch] $ExportIssuerPem,
 
     [ValidateSet("ASCII", "UTF8", "UTF32", "UTF7", "BigEndianUnicode", "Default", "OEM", "Unicode")]
@@ -423,7 +423,7 @@ Begin {
             $cngkey
         }
     }
-    function ConvertTo-PEM([System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert, [Switch] $Public, [Switch] $Private) {
+    function ConvertTo-PEM([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert, [Switch] $Public, [Switch] $Private) {
         if ($Public) {
             Format-Pem -Bytes ($Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)) -Header "CERTIFICATE"
         }
@@ -750,7 +750,7 @@ Begin {
     function Verify-Certificate([String] $Domain, [String[]] $SAN) {
         if ($ResetRegistration -or $RenewCertificate -or $RecreateCertificate) { return $false }
         
-        $cert = Get-LastCertificate -Domain $Domain -SAN $SAN
+        [System.Security.Cryptography.X509Certificates.X509Certificate2] $cert = Get-LastCertificate -Domain $Domain -SAN $SAN
         
         if ($cert -eq $null) {
             Write-Host " ! Can't find existing certificate. Creating new..."
@@ -816,6 +816,23 @@ Begin {
                 ($SAN -ne $null -and ($SAN.Count +1) -eq $_.DnsNameList.Count -and ([string[]]($_.DnsNameList|? {$SAN.IndexOf($_) -ge 0 -or $_ -eq $Domain})).Count -eq $_.DnsNameList.Count)
             )
         }|Sort-Object -Property NotAfter|Select-Object -Last 1)
+    }
+    function Get-CertificateIssuerCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
+        # $issuerUrl = ($Cert.Extensions|? {$_.Oid.Value -eq "1.3.6.1.5.5.7.1.1"}).RawData|Decode-ASN1Sequence|? {($_|Decode-ASN1Sequence)[0].IsCAIssuer}|% {($_|Decode-ASN1Sequence)[1]|Decode-ASN1String}
+        # download, read in X509Certificate2, Export
+        [System.Security.Cryptography.X509Certificates.X509Extension] $oid = $Cert.Extensions["1.3.6.1.5.5.7.1.1"]
+        if ($oid -eq $null) { return }
+        
+        [string] $CaInfo = $oid.Format($false)
+        if ($CaInfo.IndexOf("(1.3.6.1.5.5.7.48.2)") -eq -1) { return }
+        
+        [int] $i = $CaInfo.IndexOf("URL=", $CaInfo.LastIndexOf("(1.3.6.1.5.5.7.48.2)")) +4
+        [uri] $uri = $CaInfo.Substring($i, [System.Math]::Min($CaInfo.Length, $(if ($CaInfo.IndexOf(",", $i) -ne -1) { $CaInfo.IndexOf(",", $i) } else { $CaInfo.Length })) - $i)
+        
+        $resp = Invoke-WebRequest -UseBasicParsing -Uri $uri -Method Get
+        if ($resp.StatusCode -ne 200) { return }
+        
+        New-Object -TypeName System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList ($resp.Content, "")
     }
     function Sign-Domain([String] $Domain, [String[]] $SAN) {
         Verify-ACMEAuthorization $Domain
@@ -1124,9 +1141,10 @@ Process {
         if ($ExportPfx) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).pfx", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $ExportPassword)) }
         if ($ExportPkcs12) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).p12", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $ExportPassword)) }
         if ($ExportCert) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).crt", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)) }
-        if ($ExportPem) { ConvertTo-PEM -Cert $Cert -Public -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).pem" -Encoding $ExportPemEncoding }
-        if ($ExportPemCert) { ConvertTo-PEM -Cert $Cert -Public|Out-File -FilePath "$($CertDir.FullName)\$($Domain).cert.pem" -Encoding $ExportPemEncoding }
-        if ($ExportPemKey) { ConvertTo-PEM -Cert $Cert -Private|Out-File -FilePath "$($CertDir.FullName)\$($Domain).key.pem" -Encoding $ExportPemEncoding }
+        if ($ExportPem) { $Cert | ConvertTo-PEM -Public -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemCert) { $Cert | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).cert.pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemKey) { $Cert | ConvertTo-PEM -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).key.pem" -Encoding $ExportPemEncoding }
+        if ($ExportIssuerPem) { $Cert | Get-CertificateIssuerCertificate | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).chain.pem" -Encoding $ExportPemEncoding }
 
         $Cert
     } catch { die -Message (Generate-ErrorMessage $_) }
