@@ -265,9 +265,12 @@ Begin {
         } catch [System.Net.WebException] {
             if ($_.ErrorDetails.Message.IndexOf("No registration exists matching provided key") -ge 0 -or
                 $_.ErrorDetails.Message.IndexOf("Request signing key did not match registration key") -ge 0) {
-                if ($AutoFix) { # Account is lost due to mismatching account key
+                if ($AutoFix) {
+                    Write-Host " ! Account is lost possibly due to mismatching account key"
+                    Write-Host " ! AutoFix: applying -ResetRegistration"
                     Create-ACMERegistration (Get-AccountConfig|ConvertTo-Hashtable)
                     $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
+                    Write-Host " + AutoFix: successful"
                 }
                 else { die "Local account data is corrupt. Please recreate account with -ResetRegistration" }
             } else {
@@ -420,7 +423,7 @@ Begin {
                 switch ($key.AlgorithmGroup.AlgorithmGroup) {
                     RSA { ConvertRSATo-Pem -PrivateKey (New-Object -TypeName System.Security.Cryptography.RSACng -ArgumentList ($key)) }
                     ECDSA { ConvertECDsaTo-Pem -PrivateKey (New-Object -TypeName System.Security.Cryptography.ECDsaCng -ArgumentList ($key)) }
-                    ECDH { Write-Warning "! Exports of EC Certificates in PEM format isn't supported on your system." }
+                    ECDH { Write-Host " ! Exports of EC Certificates in PEM format isn't supported on your system." }
                 }
             } else { ConvertRSATo-Pem -PrivateKey $key }
         }
