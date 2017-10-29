@@ -29,7 +29,7 @@ If you looking for a trustworthy slim acme client for linux/unix check out his w
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [1024|2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 The script can take an array of domain names from piped input. Please have a look [at the examples](#examples).
 
@@ -68,9 +68,10 @@ Accept CAs terms of service
 ###### -Staging
 Using the staging environment of Let'sEncrypt if `-CA` isn't specified
 ###### -KeyAlgo `[Rsa|ECDSA_P256|ECDSA_P384]`
-Which algorithm should be used? (use with `-RecreateCertificate`)
-###### -KeySize `[1024|2048|4096]`
-Size of rsa keys (default: `4096`)
+Which algorithm should be used?
+###### -KeySize `[2048|4096]`
+Size of rsa keys (default: `4096`)\
+Due to a limitation in CertEnroll::CX509PrivateKey we can't create odd sized rsa keys like 4000 bit
 ###### -RenewDays `<Int32>`
 Minimum days before expiration to automatically renew certificate (default: `30`)
 ###### -ChallengeType `[http-01|dns-01]`

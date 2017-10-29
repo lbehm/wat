@@ -126,12 +126,13 @@ Param (
     # Using the staging environment of Let'sEncrypt if -CA isn't specified
     [Switch] $Staging,
     
-    # Which algorithm should be used? (use with -RecreateCertificate)
+    # Which algorithm should be used?
     [ValidateSet("Rsa", "ECDSA_P256", "ECDSA_P384")]
-    [System.Security.Cryptography.CngAlgorithm] $KeyAlgo = "Rsa",
+    [System.Security.Cryptography.CngAlgorithm] $KeyAlgo = [System.Security.Cryptography.CngAlgorithm]::Rsa,
     
     # Size of rsa keys (default: 4096)
-    [ValidateSet(1024, 2048, 4096)]
+    # Due to a limitation in CertEnroll::CX509PrivateKey we can't create odd sized rsa keys like 4000 bit
+    [ValidateSet(2048, 4096)]
     [int] $KeySize = 4096,
     
     # Minimum days before expiration to automatically renew certificate (default: 30)
@@ -220,13 +221,20 @@ Begin {
         Exit $ExitCode
     }
     function Generate-ErrorMessage([System.Management.Automation.ErrorRecord]$Exception) {
-        $FullDescription = "$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
-        $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
-        if ($Exception.ErrorDetails.Message) { $FullDescription += "`$($Exception.ErrorDetails.Message)"}
-        $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
-        $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
-        $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
-        $FullDescription
+        try {
+            $FullDescription = "$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
+            $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
+            if ($Exception.ErrorDetails -ne $null) {
+                $FullDescription += "`n$($Exception.ErrorDetails.Message)"
+            }
+            $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
+            $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
+            $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
+            $FullDescription
+        } catch {
+            Write-Host " X An unexpected Error occured resulting in another error while handling your first error."
+            die $_.FullyQualifiedErrorId
+        }
     }
     trap [Exception] { die -Message (Generate-ErrorMessage $_) }
     Set-PSDebug -Strict
@@ -726,8 +734,7 @@ Begin {
     function Verify-Config() {
         if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { die "Challenge type dns-01 needs a -onChallenge script for deployment... can't continue." }
         if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
-        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 1024) { die "KeyAlgo is Rsa: KeySize must be at least 1024." }
-        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $KeySize -lt 2048) { Write-Host " ! KeyAlgo is Rsa: KeySize should be at least 2048." }
+        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and -not ($KeySize -in (2048, 4096))) { die "KeyAlgo is Rsa: -KeySize must be 2048 or 4096." }
     
         # Creating Directories
         if (-not $BaseDir.Exists) { die "BaseDir does not exist: $BaseDir" }
@@ -744,14 +751,21 @@ Begin {
             return $false
         }
 
+        $key = $cert | Get-CngPrivateKeyFromCertificate
+        if ($key -eq $null) {
+            Write-Host " ! Can't find private key in existing certificate. Creating new..."
+            return $false
+        }
+
         Write-Host " + Checking algorithm of existing cert... " -NoNewline
-        if ($cert.PublicKey.Oid.FriendlyName.Substring(0, 2).ToLower() -eq $KeyAlgo.Algorithm.Substring(0, 2).ToLower()) { # ECC -eq ECDSA_P*
+        if ($key.Algorithm.Algorithm -eq $KeyAlgo.Algorithm -and
+            ($KeyAlgo -ne [System.Security.Cryptography.CngAlgorithm]::Rsa -or $key.KeySize -eq $KeySize)) {
             Write-Host "unchanged."
         } else {
             Write-Host "changed!"
             Write-Host " + Key algorithm is not matching!"
-            Write-Host " + Key algorithm in old certificate: $($cert.PublicKey.Oid.FriendlyName)"
-            Write-Host " + Configured algorithm: $($KeyAlgo.Algorithm)"
+            Write-Host " + Key algorithm in old certificate: $($key.Algorithm.Algorithm) ($($key.KeySize) bits)"
+            Write-Host (" + Configured algorithm: $($KeyAlgo.Algorithm)" + $(if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa) {" ($($KeySize) bits)"}))
             Write-Host " + Forcing renew."
 
             return $false
@@ -798,7 +812,11 @@ Begin {
 
         [System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert = Get-LastCertificate -Domain $Domain
         
-        if ($RecreateCertificate -or $OldCert -eq $null-or $OldCert.PublicKey.Oid.FriendlyName.Substring(0, 2).ToLower() -ne $KeyAlgo.Algorithm.Substring(0, 2).ToLower()) { # ECC -eq ECDSA_P*
+        if ($RecreateCertificate -or
+            $OldCert -eq $null -or
+            ($OldKey = $OldCert | Get-CngPrivateKeyFromCertificate) -eq $null -or
+            $OldKey.Algorithm.Algorithm -ne $KeyAlgo.Algorithm -or
+            ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $OldKey.KeySize -ne $KeySize)) {
             Create-CSR -Domain $Domain -SAN $SAN
         } else {
             Renew-Certificate -OldCert $OldCert
@@ -853,6 +871,7 @@ Begin {
                 $HashAlgo = "SHA384"
             }
         }
+        Write-Host " + Creating request. ExchangeAlgorithm: $($KeyAlgo.Algorithm) KeySize: $($Size) HashAlgorithm: $($HashAlgo)"
 
         # create Key with CertEnroll API
         $pk = New-Object -ComObject X509Enrollment.CX509PrivateKey -Property @{
@@ -973,6 +992,7 @@ Begin {
         Get-LastCertificate -Domain $Domain
     }
     function Renew-Certificate([System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert) {
+        Write-Host " + Creating renewal request. Based on $($OldCert.Thumbprint)"
         $request = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10
         [int] $InheritOptions = (
             0x00000020 -bor # InheritRenewalCertificateFlag
