@@ -137,8 +137,8 @@ Param (
     [System.Security.Cryptography.CngAlgorithm] $KeyAlgo = [System.Security.Cryptography.CngAlgorithm]::Rsa,
     
     # Size of rsa keys (default: 4096)
-    # Due to a limitation in CertEnroll::CX509PrivateKey we can't create odd sized rsa keys like 4000 bit
-    [ValidateSet(2048, 4096)]
+    # Possible values are between 2048 and 4096 and a multiple of 64 (e.g. 3072 is possible)
+    [ValidateScript({ ($_%64) -eq 0 -and $_ -ge 2048 -and $_ -le 4096 })]
     [int] $KeySize = 4096,
     
     # Minimum days before expiration to automatically renew certificate (default: 30)
@@ -740,8 +740,7 @@ Begin {
     function Verify-Config() {
         if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { die "Challenge type dns-01 needs a -onChallenge script for deployment... can't continue." }
         if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
-        if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and -not ($KeySize -in (2048, 4096))) { die "KeyAlgo is Rsa: -KeySize must be 2048 or 4096." }
-    
+
         # Creating Directories
         if (-not $BaseDir.Exists) { die "BaseDir does not exist: $BaseDir" }
         if (-not $CertDir.Exists) { New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null }
@@ -819,7 +818,6 @@ Begin {
     }
     function Get-CertificateIssuerCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
         # $issuerUrl = ($Cert.Extensions|? {$_.Oid.Value -eq "1.3.6.1.5.5.7.1.1"}).RawData|Decode-ASN1Sequence|? {($_|Decode-ASN1Sequence)[0].IsCAIssuer}|% {($_|Decode-ASN1Sequence)[1]|Decode-ASN1String}
-        # download, read in X509Certificate2, Export
         [System.Security.Cryptography.X509Certificates.X509Extension] $oid = $Cert.Extensions["1.3.6.1.5.5.7.1.1"]
         if ($oid -eq $null) { return }
         
@@ -1073,7 +1071,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.2.1.0"
+    [string] $VERSION = "0.2.2.0"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes

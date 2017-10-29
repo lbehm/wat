@@ -71,7 +71,7 @@ Using the staging environment of Let'sEncrypt if `-CA` isn't specified
 Which algorithm should be used?
 ###### -KeySize `[2048|4096]`
 Size of rsa keys (default: `4096`)\
-Due to a limitation in CertEnroll::CX509PrivateKey we can't create odd sized rsa keys like 4000 bit
+Possible values are between 2048 and 4096 and a multiple of 64 (e.g. 3072 is possible)
 ###### -RenewDays `<Int32>`
 Minimum days before expiration to automatically renew certificate (default: `30`)
 ###### -ChallengeType `[http-01|dns-01]`
