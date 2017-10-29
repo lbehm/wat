@@ -1073,7 +1073,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.2.0.0"
+    [string] $VERSION = "0.2.1.0"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
