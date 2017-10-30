@@ -202,12 +202,13 @@ Param (
     [ValidateSet("ASCII", "UTF8", "UTF32", "UTF7", "BigEndianUnicode", "Default", "OEM", "Unicode")]
     [string] $ExportPemEncoding = "ASCII",
 
-    # Script to be invoked with challenge token
-    [Parameter(DontShow = $true)]
+    # Script to be invoked with challenge token receiving the following parameter:
+    # Domain - The domain name you want to verify
+    # Token / FQDN - The file name for http-01 or domain name for dns-01 challenges
+    # KeyAuthorization - The value you have to place in the file or dns TXT record
     [System.Management.Automation.ScriptBlock] $onChallenge,
 
-    # Script to be invoked after challenge
-    [Parameter(DontShow = $true)]
+    # Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
     [System.Management.Automation.ScriptBlock] $onChallengeCleanup,
     
     # Internal identifier of the ACME account
@@ -863,26 +864,36 @@ Begin {
         if ($challenge.status -eq "valid") {
             Write-Host " + Already validated!"
         } elseif ($challenge.status -eq "pending") {
-            $token = "$($challenge.token).$(Get-Thumbprint)"
+            $keyAuthorization = "$($challenge.token).$(Get-Thumbprint)"
 
             switch ($ChallengeType) {
                 'http-01' {
-                    &$onChallenge "$($challenge.token)" "$token" "$Domain" | Out-Null
+                    &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host
                 }
                 'dns-01' {
-                    $token = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($token)))
-                    &$onChallenge "$token" "$Domain" | Out-Null
+                    $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::ASCII.GetBytes($keyAuthorization)))
+                    &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
                 }
             }
 
             Write-Host " + Responding to challenge for $($Domain)..."
             $resp = Invoke-SignedWebRequest -Uri $challenge.uri -Resource 'challenge' -Payload @{
-                "keyAuthorization" = $token;
+                "keyAuthorization" = $keyAuthorization;
             }
             while ($resp.status -eq "pending") {
                 Start-Sleep -Seconds 1
                 $resp = (Invoke-WebRequest -Uri $challenge.uri -Method Get -UseBasicParsing).Content|ConvertFrom-Json
             }
+
+            switch ($ChallengeType) {
+                'http-01' {
+                    &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host
+                }
+                'dns-01' {
+                    &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host
+                }
+            }
+
             if ($resp.status -eq "valid") {
                 Write-Host " + Challenge is valid!"
             } elseif ($resp.status -eq "invalid") {
@@ -1084,7 +1095,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.2.2.1"
+    [string] $VERSION = "0.2.2.2"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1122,21 +1133,35 @@ Begin {
     Verify-ACMELicense
     Verify-ACMERegistration
 
-    if ($onChallenge -eq $null) {
-        switch ($ChallengeType) {
-            'http-01' {
+    switch ($ChallengeType) {
+        'http-01' {
+            if ($onChallenge -eq $null) {
                 $onChallenge = {
-                    Param([String] $Id, [String] $Token, [String] $Domain)
-                    $Token | Out-File -FilePath "$($WellKnown.FullName)\$($Id)" -Encoding ascii
+                    Param([String] $Domain, [String] $Token, [String] $KeyAuthorization)
+                    $KeyAuthorization | Out-File -FilePath "$($WellKnown.FullName)\$($Token)" -Encoding ascii
                 }
             }
-            'dns-01' {
+            if ($onChallengeCleanup -eq $null) {
+                $onChallengeCleanup = {
+                    Param([String] $Domain, [String] $Token, [String] $KeyAuthorization)
+                    Remove-Item -Path "$($WellKnown.FullName)\$($Token)" -Force
+                }
+            }
+        }
+        'dns-01' {
+            if ($onChallenge -eq $null) {
                 # manual dns challenge handling - for testing purposes only
                 $onChallenge = {
-                    Param([String] $Token, [String] $Domain)
-                    Write-Host "Please deploy a DNS TXT record under the name '_acme-challenge.$($Domain)' with the following value: $($Token)"
-                    Write-Host "Once this is deployed, press Enter to continue"
-                    Read-Host
+                    Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
+                    Write-Host " ! Please deploy a DNS TXT record under the name '$($FQDN)' with the following value: $($KeyAuthorization)"
+                    Write-Host " ! Once this is deployed, press Enter to continue"
+                    Read-Host | Out-Null
+                }
+            }
+            if ($onChallengeCleanup -eq $null) {
+                $onChallengeCleanup = {
+                    Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
+                    Write-Host " ! You can now remove the DNS TXT record '$($FQDN)' with the following value: $($KeyAuthorization)"
                 }
             }
         }

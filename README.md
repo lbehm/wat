@@ -29,7 +29,7 @@ If you looking for a trustworthy slim acme client for linux/unix check out his w
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 The script can take an array of domain names from piped input. Please have a look [at the examples](#examples).
 
@@ -108,7 +108,12 @@ Export the private key in Base64 encoded PEM format (Warning: private key is NOT
 Export the certificate of the Issuer (e.g. Let'sEncrypt) in Base64 encoded PEM format
 ###### -ExportPemEncoding `[ASCII|UTF8|UTF32|Unicode|...]`
 ###### -onChallenge `<ScriptBlock>`
-Script to be invoked with challenge token
+Script to be invoked with challenge token receiving the following parameter:
+    Domain            The domain name you want to verify
+    Token / FQDN      The file name for http-01 or domain name for dns-01 challenges
+    KeyAuthorization  The value you have to place in the file or dns TXT record
+###### -onChallengeCleanup `<ScriptBlock>`
+Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
 ###### -InternalAccountIdentifier `<String>`
 Internal identifier of the ACME account
 ###### -AutoFix
