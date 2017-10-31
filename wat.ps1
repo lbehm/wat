@@ -1209,7 +1209,7 @@ Begin {
                 # manual dns challenge handling - for testing purposes only
                 $onChallenge = {
                     Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
-                    Write-Host " ! Please deploy a DNS TXT record under the name '$($FQDN)' with the following value: $($KeyAuthorization)"
+                    Write-Host " ! Please deploy a DNS TXT record under the name $($FQDN) with the following value: $($KeyAuthorization)"
                     Write-Host " ! Once this is deployed, press Enter to continue"
                     Read-Host | Out-Null
                     Write-Host "Testing DNS record"
@@ -1217,12 +1217,13 @@ Begin {
                         Write-Host -NoNewline "."
                         sleep -Seconds 3
                     }
+                    Write-Host " "
                 }
             }
             if ($onChallengeCleanup -eq $null) {
                 $onChallengeCleanup = {
                     Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
-                    Write-Host " ! You can now remove the DNS TXT record '$($FQDN)' with the following value: $($KeyAuthorization)"
+                    Write-Host " ! You can now remove the DNS TXT record $($FQDN) with the following value: $($KeyAuthorization)"
                 }
             }
         }
