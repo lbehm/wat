@@ -226,11 +226,7 @@ Param (
 Begin {
     function die {
         param(
-            [Parameter(Position = 0, ParameterSetName = 'Exception')]
             [System.Management.Automation.ErrorRecord] $Exception,
-            [Parameter(Position = 0, ParameterSetName = 'Acme')]
-            $ACMEError,
-            [Parameter(Position = 0, ParameterSetName = 'Message')]
             [string] $Message = "",
             [int] $ExitCode = 1,
             [int] $EventId = 0,
@@ -242,19 +238,16 @@ Begin {
         )
         try {
             [string] $FullDescription = "[$($AppName)] $($Message)"
-            switch ($PSCmdlet.ParameterSetName) {
-                'Exception' {
-                    $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
-                    $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
-                    if ($Exception.ErrorDetails -ne $null) {
-                        $FullDescription += "`n$($Exception.ErrorDetails.Message)"
-                    }
-                    $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
-                    $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
-                    $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
+            if ($Exception -ne $null) {
+                $FullDescription += "`n$($Exception.FullyQualifiedErrorId)"
+                $FullDescription += "`nExceptionMessage: $($Exception.Exception.Message)"
+                if ($Exception.ErrorDetails -ne $null) {
+                    $FullDescription += "`n$($Exception.ErrorDetails.Message)"
                 }
-                'Acme' {
-                }
+                $FullDescription += "`n$($Exception.InvocationInfo.PositionMessage)"
+                $FullDescription += "`nCategoryInfo: $($Exception.CategoryInfo.GetMessage())"
+                $FullDescription += "`nStackTrace:`n$($Exception.ScriptStackTrace)"
+                $FullDescription += "`n$($Exception.Exception.StackTrace)"
             }
             Write-Eventlog -EntryType $EntryType -LogName $LogName -Source $Source -Category $Category -EventId $EventId -Message $FullDescription
             Write-Host $FullDescription -ForegroundColor Red -BackgroundColor Black
