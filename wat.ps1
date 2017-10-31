@@ -112,11 +112,12 @@ Param (
     # Force renew of certificate even if it is longer valid than value in RenewDays
     [Switch] $RenewCertificate,
     
-    # Create complete new private key and certificate (useful when changing -KeyAlgo)
+    # Create complete new private key and certificate
     [Parameter(DontShow = $true)]
     [Switch] $RecreateCertificate,
     
     # Regenerate private keys instead of just signing new certificates on renewal
+    [Parameter(DontShow = $true)]
     [Switch] $RenewPrivateKey,
     
     # Adding CSR feature indicating that OCSP stapling should be mandatory
@@ -261,7 +262,7 @@ Begin {
     }
     trap [Exception] { die -Exception $_ }
     Set-PSDebug -Strict
-    Set-StrictMode -Version 3
+    Set-StrictMode -Version 4
     $ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
     $Error.Clear()
     
@@ -282,10 +283,9 @@ Begin {
     }
     function Invoke-SignedWebRequest([uri] $Uri, [Microsoft.PowerShell.Commands.WebRequestMethod] $Method = [Microsoft.PowerShell.Commands.WebRequestMethod]::Post, [String] $Resource, [hashtable] $Payload) {
         $Payload.resource = $Resource
-        $nonce = Get-ACMENonce
         $body = @{
             header = Get-JWKHeader;
-            protected = Get-JWKHeader -Nonce $Nonce -Base64;
+            protected = Get-JWKHeader -Nonce (Get-ACMENonce) -Base64;
             payload = Encode-UrlBase64 -Object $Payload;
         }
         $body.signature = Get-JWSignature -Value "$($body.protected).$($body.payload)"
@@ -309,7 +309,34 @@ Begin {
         if (-not $resp.Headers.ContainsKey('Replay-Nonce')) {throw "Can't fetch Nonce"}
         $resp.Headers['Replay-Nonce']
     }
-    function Get-ACMEDirectory([uri] $Url) {
+    function Get-JWKHeader([System.Security.Cryptography.RSACng] $Rsa = $AccountKey, [String] $Nonce, [Switch] $JSON, [Switch] $Base64) {
+        $export = $Rsa.ExportParameters($false)
+    
+        $header = @{
+            alg = "RS256";
+            jwk = @{
+                kty = "RSA";
+                e = (Encode-UrlBase64 -Bytes $export.Exponent);
+                n = (Encode-UrlBase64 -Bytes $export.Modulus);
+            };
+        }
+    
+        if ($Nonce.Length) {
+            $header.nonce = $Nonce
+        }
+
+        if (-not ($JSON -or $Base64)) {
+            return $header
+        } elseif ($Base64){
+            Encode-UrlBase64 -Object $header
+        } else {
+            ConvertTo-Json -Compress -InputObject $header
+        }
+    }
+    function Get-JWSignature([String] $Value, [System.Security.Cryptography.RSACng] $Rsa = $AccountKey, [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256) {
+        Encode-UrlBase64 -Bytes ($Rsa.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), $Algo, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1))
+    }
+    function Get-ACMEDirectory([uri] $Uri) {
         [hashtable] $Directory = @{
             "newNonce" = "";
             "newAccount" = "";
@@ -320,10 +347,7 @@ Begin {
             "termsOfService" = "";
         }
     
-        $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -UserAgent $UserAgent
-        if ($resp.StatusCode -ne 200) {throw "Can't fetch Directory"}
-
-        $json = ConvertFrom-Json $resp.Content
+        $json = (Invoke-WebRequest -Uri $Uri -UseBasicParsing -UserAgent $UserAgent).Content | ConvertFrom-Json
 
         if ($ACMEVersion -eq "acme1-boulder") {
             # WAT moment #1:
@@ -362,17 +386,6 @@ Begin {
             return New-Object System.Security.Cryptography.RSACng ([System.Security.Cryptography.CngKey]::Create([System.Security.Cryptography.CngAlgorithm]::Rsa, $Name, $keyCreationParams))
         }
     }
-    function Get-RSACryptoServiceProvider([String] $Name, [int] $Size = 4096) {
-        [System.Security.Cryptography.CspParameters] $csp = New-Object System.Security.Cryptography.CspParameters 1 # RSA = 1
-        $csp.KeyContainerName = $Name
-        $csp.Flags = [System.Security.Cryptography.CspProviderFlags]::UseArchivableKey
-        [System.Security.Cryptography.RSACryptoServiceProvider] $rsa = New-Object -TypeName System.Security.Cryptography.RSACryptoServiceProvider $Size, $csp
-        $rsa.PersistKeyInCsp = $true
-        #[System.Security.Cryptography.RSAParameters] $params = $rsa.ExportParameters($true)
-        #$rsa.Clear()
-
-        $rsa
-    }
     function Get-PrivateKey([string] $Name, [int] $Size, [System.Security.Cryptography.CngAlgorithm] $Algorithm = [System.Security.Cryptography.CngAlgorithm]::Rsa) {
         switch ($Algorithm) {
             ([System.Security.Cryptography.CngAlgorithm]::Rsa) {
@@ -399,6 +412,17 @@ Begin {
         
             New-Object -TypeName $RetType.FullName -ArgumentList ([System.Security.Cryptography.CngKey]::Create($CngAlgorithm, $Name, $keyCreationParams))
         }
+    }
+    function Get-ACMEPrivateKeyThumbprint {
+        [System.Security.Cryptography.HashAlgorithm] $Algo = [System.Security.Cryptography.SHA256Cng]::Create()
+        $export = $AccountKey.ExportParameters($false)
+        Encode-UrlBase64 -Bytes (
+            $Algo.ComputeHash(
+                [System.Text.Encoding]::UTF8.GetBytes(
+                    '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}'
+                )
+            )
+        )
     }
     function Get-CngPrivateKeyFromCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
         # well, by now it should be obvious whats going on here
@@ -463,7 +487,7 @@ Begin {
             $out += $base64.Substring($i, [System.Math]::Min(64, $base64.Length - $i)) + "`n"
         }
         if ($Header.Length) {
-            $out += "-----END $($Header)-----`n"
+            $out += "-----END $($Header)-----"
         }
         $out
     }
@@ -641,10 +665,14 @@ Begin {
                     }
                     die -Message "Email domain verification failed! Check your email address!"
                 }
-                'malformed' { # id in url is missing or -lt 0; possible reason I can think of: (re)moved account file => only rescue would be creation of new account
+                'malformed' { # AccountKey is assigned to different account; possible reason I can think of: (re)moved/deleted account file/directory => only rescue would be creation of new account
                     if ($AutoFix) {
-                        Write-Host " ! AutoFix: applying -ResetRegistration and recreating account"
+                        Write-Host " ! AutoFix: applying -ResetRegistration and recreating AccountKey"
+                        $AutoFix = $false # disable due to recursive loop
+                        [System.Security.Cryptography.CngKey]::Open($AccHash).Delete()
+                        $AccountKey = Get-RSACng -Name $AccHash
                         Create-ACMERegistration $Config
+                        $AutoFix = $true
                         Write-Host " + AutoFix: successful"
                         return
                     }
@@ -749,56 +777,6 @@ Begin {
         }
         $true
     }
-    function Get-JWKHeader([System.Security.Cryptography.RSACng] $Rsa = $Script:AccountRsa, [String] $Nonce, [Switch] $JSON, [Switch] $Base64) {
-        $export = $Rsa.ExportParameters($false)
-    
-        $header = @{
-            alg = "RS256";
-            jwk = @{
-                kty = "RSA";
-                e = (Encode-UrlBase64 -Bytes $export.Exponent);
-                n = (Encode-UrlBase64 -Bytes $export.Modulus);
-            };
-        }
-    
-        if ($Nonce.Length) {
-            $header.nonce = $Nonce
-        }
-
-        if (-not ($JSON -or $Base64)) {
-            return $header
-        } elseif ($Base64){
-            Encode-UrlBase64 -Object $header
-        } else {
-            ConvertTo-Json -Compress -InputObject $header
-        }
-    }
-    function Get-JWSignature([String] $Value, [System.Security.Cryptography.RSACng] $Rsa = $AccountRsa, [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256) {
-        Encode-UrlBase64 -Bytes ($Rsa.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), $Algo, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1))
-    }
-    function Verify-JWSignature([String] $Value, [String] $Signature, [System.Security.Cryptography.RSACng] $Rsa = $AccountRsa, [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256) {
-        # just for testing
-        $Rsa.VerifyData([System.Text.Encoding]::UTF8.GetBytes($Value), (Decode-UrlBase64 -Value $Signature), $Algo, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-    }
-    function Get-Thumbprint([System.Security.Cryptography.RSACng] $Rsa = $AccountRsa, [System.Security.Cryptography.HashAlgorithm] $Algo = [System.Security.Cryptography.SHA256Cng]::Create()) {
-        $export = $Rsa.ExportParameters($false)
-        Encode-UrlBase64 -Bytes (
-            $Algo.ComputeHash(
-                [System.Text.Encoding]::UTF8.GetBytes(
-                    '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}'
-                )
-            )
-        )
-    }
-    function Verify-Config() {
-        if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { Write-Host " ! Challenge type dns-01 should be used with an automated -onChallenge script for deployment." }
-        if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die -Message "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
-
-        # Creating Directories
-        if (-not $BaseDir.Exists) { die -Message "BaseDir does not exist: $BaseDir" }
-        if (-not $CertDir.Exists) { New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null }
-        if (-not ([System.IO.DirectoryInfo] "$AccountDir\$CAHASH").Exists) { New-Item -Type Directory -Path "$AccountDir\$CAHASH" -Force | Out-Null }
-    }
     function Verify-Certificate([String] $Domain, [String[]] $SAN) {
         if ($ResetRegistration -or $RenewCertificate -or $RecreateCertificate) { return $false }
         
@@ -809,62 +787,42 @@ Begin {
             return $false
         }
 
-        $key = $cert | Get-CngPrivateKeyFromCertificate
-        if ($key -eq $null) {
-            Write-Host " ! Can't find private key in existing certificate. Creating new..."
-            return $false
-        }
-
-        Write-Host " + Checking algorithm of existing cert... " -NoNewline
-        if ($key.Algorithm.Algorithm -eq $KeyAlgo.Algorithm -and
-            ($KeyAlgo -ne [System.Security.Cryptography.CngAlgorithm]::Rsa -or $key.KeySize -eq $KeySize)) {
-            Write-Host "unchanged."
-        } else {
-            Write-Host "changed!"
-            Write-Host " + Key algorithm is not matching!"
-            Write-Host " + Key algorithm in old certificate: $($key.Algorithm.Algorithm) ($($key.KeySize) bits)"
-            Write-Host (" + Configured algorithm: $($KeyAlgo.Algorithm)" + $(if ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa) {" ($($KeySize) bits)"}))
-            Write-Host " + Forcing renew."
-
-            return $false
-        }
-        Write-Host " + Checking domain names of existing cert... " -NoNewline
-        [string[]]$DnsNameList = ($Domain)
-        if ($SAN -ne $null) { $DnsNameList += $SAN }
-        
-        if ($cert.FriendlyName -eq (Get-CertificateFriendlyName -Domain $Domain) -and (Compare-Lists $DnsNameList ($cert.DnsNameList|% {$_.ToString()}))) {
-            Write-Host "unchanged."
-        } else {
-            Write-Host "changed!"
-            Write-Host " + Domain name(s) are not matching!"
-            Write-Host " + Names in old certificate: $($cert.DnsNameList|% {$_.ToString()})"
-            Write-Host " + Configured names: $DnsNameList"
-            Write-Host " + Forcing renew."
-
-            return $false
-        }
-
         Write-Host " + Checking expire date of existing cert..."
         Write-Host " + Valid till $($cert.NotAfter) " -NoNewline
-        if ($cert.NotAfter -gt (Get-Date).AddDays($RenewDays)) {
-            Write-Host "(Longer than $(($cert.NotAfter - (Get-Date)).Days) days)."
+        [System.DateTime] $offDate = (Get-Date).AddDays($RenewDays)
+        if ($cert.NotAfter -gt $offDate) {
+            Write-Host "(Longer than $(($cert.NotAfter - $offDate).Days) days)."
         } else {
-            Write-Host "(Less than $(((Get-Date) - $cert.NotAfter).Days) days). Renewing!"
+            Write-Host "(Less than $(($cert.NotAfter - $offDate).Days) days). Renewing!"
             return $false        
         }
 
         # passed all checks
         return $true
     }
-    function Get-CertificateFriendlyName([String] $Domain) { "$($Domain) - $($CAHASH)" }
+    function Get-CertificateFriendlyName([String] $Domain) { "$($Domain) - $($AccHash)" }
+    function Get-CertificateAlternateDomainNames([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
+        if (($Cert | Get-Member -Name DnsNameList) -ne $null -and $Cert.DnsNameList -ne $null -and $Cert.DnsNameList.Count -gt 0) {
+            $Cert.DnsNameList|% {$_.ToString()}
+        } else { # fallback
+            $Cert.Extensions["2.5.29.17"].Format($false)|% {$_ -split ', '}|? {($_ -split '=')[0] -like '*DNS*'}|% {($_ -split '=')[1]}
+        }
+    }
     function Get-LastCertificate([String] $Domain, [string[]] $SAN) {
         [string[]] $DnsNameList = ($Domain)
         if ($SAN -ne $null) { $DnsNameList += $SAN }
 
         [System.Security.Cryptography.X509Certificates.X509Certificate2](gci "Cert:\$($Context)\My" |? {
-            $_.FriendlyName -eq (Get-CertificateFriendlyName $Domain) -and 
-            $_.HasPrivateKey -and (Compare-Lists ($_.DnsNameList|% {$_.ToString()}) $DnsNameList)
-        }|Sort-Object -Property NotAfter|Select-Object -Last 1)
+            $_.FriendlyName -eq (Get-CertificateFriendlyName $Domain) -and # Domain and CA check
+            (Compare-Lists (Get-CertificateAlternateDomainNames $_) $DnsNameList) -and # SAN/DnsNamesList check
+            $_.HasPrivateKey -and
+            ($key = $_ | Get-CngPrivateKeyFromCertificate) -ne $null -and # PK check
+            $key.Algorithm.Algorithm.Replace("ECDH_", "ECDSA_") -eq $KeyAlgo.Algorithm -and # PK ExchAlgo check (global input)
+                # In Win7/2012R2 ECDSA_* keys will show up as ECDH_* - and also I can't export the private keys in pem format
+                # I don't know yet if I can fix that
+            ($KeyAlgo -ne [System.Security.Cryptography.CngAlgorithm]::Rsa -or $key.KeySize -eq $KeySize) -and # Rsa PK size check (global input)
+            ($_.Extensions["1.3.6.1.5.5.7.1.24"] -ne $null) -eq $OcspMustStaple # OcspMustStaple
+        } | Sort-Object -Property NotAfter -Descending | Select-Object -First 1)
     }
     function Get-CertificateIssuerCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
         # $issuerUrl = ($Cert.Extensions|? {$_.Oid.Value -eq "1.3.6.1.5.5.7.1.1"}).RawData|Decode-ASN1Sequence|? {($_|Decode-ASN1Sequence)[0].IsCAIssuer}|% {($_|Decode-ASN1Sequence)[1]|Decode-ASN1String}
@@ -884,15 +842,11 @@ Begin {
     }
     function Sign-Domain([String] $Domain, [String[]] $SAN) {
         Verify-ACMEAuthorization $Domain
-        if ($SAN -ne $null) {$SAN|% {Verify-ACMEAuthorization $_}}
+        if ($SAN -ne $null) { $SAN |% { Verify-ACMEAuthorization $_ } }
 
         [System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert = Get-LastCertificate -Domain $Domain -SAN $SAN
         
-        if ($RecreateCertificate -or
-            $OldCert -eq $null -or
-            ($OldKey = $OldCert | Get-CngPrivateKeyFromCertificate) -eq $null -or
-            $OldKey.Algorithm.Algorithm -ne $KeyAlgo.Algorithm -or
-            ($KeyAlgo -eq [System.Security.Cryptography.CngAlgorithm]::Rsa -and $OldKey.KeySize -ne $KeySize)) {
+        if ($RecreateCertificate -or $OldCert -eq $null) {
             Create-CSR -Domain $Domain -SAN $SAN
         } else {
             Renew-Certificate -OldCert $OldCert
@@ -913,12 +867,10 @@ Begin {
         $challenge = $challenges|? {$_.type -eq $ChallengeType}
         if ($challenge.status -ne "pending") { die -Message "Challenge status is '$($challenge.status)'. Can't continue!" }
 
-        $keyAuthorization = "$($challenge.token).$(Get-Thumbprint)"
+        $keyAuthorization = "$($challenge.token).$(Get-ACMEPrivateKeyThumbprint)"
 
         switch ($ChallengeType) {
-            'http-01' {
-                &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host
-            }
+            'http-01' { &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host }
             'dns-01' {
                 $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::ASCII.GetBytes($keyAuthorization)))
                 &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
@@ -936,18 +888,14 @@ Begin {
         }
 
         switch ($ChallengeType) {
-            'http-01' {
-                &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host
-            }
-            'dns-01' {
-                &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host
-            }
+            'http-01' { &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host }
+            'dns-01'  { &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host }
         }
 
         if ($resp.status -eq "valid") {
             Write-Host " + Challenge is valid!"
         } elseif ($resp.status -eq "invalid") {
-            die -Message ("Challenge is invalid`n" + $resp.error)
+            die -Message ("Challenge is invalid`n" + " ! Error[$($resp.error.type.Split(':')|Select-Object -Last 1)]: $($resp.error.detail)")
         }
     }
     function Create-CSR([String] $Domain, [String[]] $SAN) {
@@ -970,13 +918,13 @@ Begin {
                 $HashAlgo = "SHA384"
             }
         }
-        Write-Host " + Creating request. ExchangeAlgorithm: $($KeyAlgo.Algorithm) KeySize: $($Size) HashAlgorithm: $($HashAlgo)"
+        Write-Host " + Creating request: ExchangeAlgorithm: $($KeyAlgo.Algorithm), KeySize: $($Size), HashAlgorithm: $($HashAlgo), OCSP-MustStaple: $(if($OcspMustStaple){"On"}else{"Off"})"
 
         # create Key with CertEnroll API
         $pk = New-Object -ComObject X509Enrollment.CX509PrivateKey -Property @{
             Length = $Size;
             ProviderName = "Microsoft Software Key Storage Provider";
-            ExportPolicy = (
+            ExportPolicy = ( # request for discussion!
                 1 -bor # XCN_NCRYPT_ALLOW_EXPORT_FLAG
                 2 -bor # XCN_NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
                 4 -bor # XCN_NCRYPT_ALLOW_ARCHIVING_FLAG
@@ -1069,7 +1017,7 @@ Begin {
         [String] $csr = $request.RawData([int](0x1 <#XCN_CRYPT_STRING_BASE64#> -bor 0x40000000 <#XCN_CRYPT_STRING_NOCRLF#>)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
         
         # push csr to CA and fetch certificate
-        [String] $der = Sign-CSR -CSR $csr -AsDER
+        [String] $der = Sign-CSR -CSR $csr
     
         # create enrollment class
         $enroll = New-Object -ComObject X509Enrollment.CX509Enrollment
@@ -1086,22 +1034,23 @@ Begin {
 
         $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
 
-        # todo: replace the next line with something more accurate
-        # maybe $enroll.Certificate is helpful
-        Get-LastCertificate -Domain $Domain -SAN $SAN
+        # get the thumbprint of the new certificate, find the matching certificate in the cert store and return it
+        [string] $thumbprint = [System.BitConverter]::ToString(([System.Security.Cryptography.SHA1Cng]::Create().ComputeHash([convert]::FromBase64String($enroll.Certificate(0x40000001))))).Replace('-', '')
+        gci "Cert:\$($Context)\" -Recurse|? {$_ -is [System.Security.Cryptography.X509Certificates.X509Certificate] -and $_.Thumbprint -eq $thumbprint}
     }
     function Renew-Certificate([System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert) {
         Write-Host " + Creating renewal request. Based on $($OldCert.Thumbprint)"
-        $request = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10
+        
         [int] $InheritOptions = (
             0x00000020 -bor # InheritRenewalCertificateFlag
             0x00000080 -bor # InheritSubjectFlag
             0x00000100 -bor # InheritExtensionsFlag
             0x00000200      # InheritSubjectAltNameFlag
         )
-        if (-not $RenewPrivateKey) {
-            $InheritOptions = $InheritOptions -bor 0x00000003 # InheritPrivateKey
-        }
+
+        if (-not $RenewPrivateKey) { $InheritOptions = $InheritOptions -bor 0x00000003 } # InheritPrivateKey
+
+        $request = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10
         $request.InitializeFromCertificate($(
             if ($Context -eq [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine) {
                 3 # ContextAdministratorForceMachine
@@ -1110,6 +1059,11 @@ Begin {
             }
         ), [System.Convert]::ToBase64String($OldCert.RawData), 1, $InheritOptions)
 
+        if ($RenewPrivateKey) {
+            # ToDo: do something...
+            # does anyone has an idea?
+        }
+
         # finish Pkcs10 request
         $request.Encode()
 
@@ -1117,7 +1071,7 @@ Begin {
         [String] $csr = $request.RawData([int](0x1 <#XCN_CRYPT_STRING_BASE64#> -bor 0x40000000 <#XCN_CRYPT_STRING_NOCRLF#>)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
         
         # push csr to CA and fetch certificate
-        [String] $der = Sign-CSR -CSR $csr -AsDER
+        [String] $der = Sign-CSR -CSR $csr
     
         # create enrollment class
         $enroll = New-Object -ComObject X509Enrollment.CX509Enrollment
@@ -1131,20 +1085,12 @@ Begin {
 
         $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
 
-        Get-LastCertificate -Domain $Domain -SAN $SAN
+        [string] $thumbprint = [System.BitConverter]::ToString(([System.Security.Cryptography.SHA1Cng]::Create().ComputeHash([convert]::FromBase64String($enroll.Certificate(0x40000001))))).Replace('-', '')
+        gci "Cert:\$($Context)\" -Recurse|? {$_ -is [System.Security.Cryptography.X509Certificates.X509Certificate] -and $_.Thumbprint -eq $thumbprint}
     }
-    function Sign-CSR([String] $CSR, [Switch] $AsDER) {
-        [byte[]]$bytes = Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{
-            "csr" = $CSR;
-        }
-        if ($AsDER) {
-            [Convert]::ToBase64String($bytes)
-        } else {
-            New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 ($bytes, "", ([System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet))
-        }
-    }
+    function Sign-CSR([String] $CSR) { [Convert]::ToBase64String((Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{ "csr" = $CSR })) }
     
-    [string] $VERSION = "0.2.2.3"
+    [string] $VERSION = "0.3.0.0"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1152,39 +1098,23 @@ Begin {
     [string] $AppName = "WAT v$VERSION"
     [string] $UserAgent = "$AppName (ACME 1.0)"
 
-    # Find directory in which this script is stored
-    [System.IO.FileInfo] $SOURCE = $MyInvocation.MyCommand.Definition
-    [System.IO.DirectoryInfo] $SCRIPTDIR = Split-Path -parent $SOURCE
-    
+    Write-Host "[$($AppName)]"
+
     # Fixing input parameter
     if ($ContactEmail -ne "" -and $Contact -eq $null) {
         $Contact = ("mailto:$($ContactEmail)")
     }
 
     if ($CA -eq $null) {
-        $CA = if ($Staging) {
-            "https://acme-staging.api.letsencrypt.org/directory"
-        } else {
-            "https://acme-v01.api.letsencrypt.org/directory"
-        }
+        $CA = if ($Staging) { "https://acme-staging.api.letsencrypt.org/directory" }
+                       else { "https://acme-v01.api.letsencrypt.org/directory" }
     }
-
-    [String] $CAHASH = Encode-UrlBase64 -String $CA
-    [System.Security.Cryptography.RSA] $AccountRsa = Get-RSACng -Name "$($CAHASH)$($InternalAccountIdentifier)"
     
-    [System.IO.FileInfo] $AccountConfig = "$AccountDir\$CAHASH\$InternalAccountIdentifier.json"
-    
-    # Load CA / Directory Informations
-    [hashtable] $Directory = Get-ACMEDirectory $CA -BoulderCompatibility
-
-    Create-Lock
-    Verify-Config
-    Verify-ACMELicense
-    Verify-ACMERegistration
-
     switch ($ChallengeType) {
         'http-01' {
             if ($onChallenge -eq $null) {
+                if (!$WellKnown.Exists) { die -Message "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
+
                 $onChallenge = {
                     Param([String] $Domain, [String] $Token, [String] $KeyAuthorization)
                     $KeyAuthorization | Out-File -FilePath "$($WellKnown.FullName)\$($Token)" -Encoding ascii
@@ -1199,18 +1129,22 @@ Begin {
         }
         'dns-01' {
             if ($onChallenge -eq $null) {
+                Write-Host " ! Challenge type dns-01 should be used with an automated -onChallenge script for deployment."
                 # manual dns challenge handling - for testing purposes only
                 $onChallenge = {
                     Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
-                    Write-Host " ! Please deploy a DNS TXT record under the name $($FQDN) with the following value: $($KeyAuthorization)"
+                    Write-Host " ! Please deploy a DNS TXT record under the name $($FQDN) with the following value:"
+                    Write-Host "   $($KeyAuthorization)"
                     Write-Host " ! Once this is deployed, press Enter to continue"
                     Read-Host | Out-Null
-                    Write-Host "Testing DNS record"
-                    while (($rec = Resolve-DnsName -Name $FQDN -Type TXT -Server 8.8.8.8, 8.8.4.4 -NoHostsFile -DnsOnly) -eq $null -or -not ($rec |? {$_.Text -eq $KeyAuthorization})) {
-                        Write-Host -NoNewline "."
-                        sleep -Seconds 3
+                    if ((Get-Command -Verb Resolve -Noun DnsName) -ne $null) {
+                        Write-Host "Testing DNS record"
+                        while (($rec = Resolve-DnsName -Name $FQDN -Type TXT -Server 8.8.8.8, 8.8.4.4 -NoHostsFile -DnsOnly) -eq $null -or -not ($rec |? {$_.Text -eq $KeyAuthorization})) {
+                            Write-Host -NoNewline "."
+                            sleep -Seconds 3
+                        }
+                        Write-Host " "
                     }
-                    Write-Host " "
                 }
             }
             if ($onChallengeCleanup -eq $null) {
@@ -1221,6 +1155,52 @@ Begin {
             }
         }
     }
+
+    # Building up a fixed environment/namespace to reach just one goal:
+    #  Having only ONE AccountKey in this namespace
+    # Based on following estimations
+    #  1. Our AccountKey is stored in user context or local machine if script runs as SYSTEM (please don't do this)
+    #  2. About every admin will throw that script into C:\scripts\ and will call it with different users contexts
+    #  3. About every admin will not set $InternalAccountIdentifier
+    #  4. Maybe something breaks and user dumps complete account directory, it shouldn't break the certificate enumeration in that namespace (even if AccountKey is lost we don't care)
+    # To reduce mismatching in the Account directory and issued certificates we differentiate our namespace with following parameter:
+    #  CA
+    #    Are we in Staging or normal environment?
+    #    The user can distinguish that on the folder level in his AccountDir
+    #  InternalAccountIdentifier
+    #    It's basically like a nice prefix
+    #    It is shown in the file handle of the account config
+    #  SID
+    #    The SID of the active user context
+    #    We don't show that - it would be just confusing
+    #  Context [CurrentUser|LocalMachine]
+    #    The selected destination of your issued certificates
+    # For obfuscation we hash it with SHA256 and call it $AccHash
+    # The $AccHash is used in following instances
+    #  Part of the account config file name
+    #  Suffix of the display name of every created Certificate
+    #  Identifier of our AccountKey in the CNG provider
+    
+    [string] $AccHash = [System.BitConverter]::ToString(([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes(
+        "$($CA).$($InternalAccountIdentifier).$([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value).$($Context.value__)")))).Replace('-', '')
+    
+    [System.IO.FileInfo] $AccountConfig = "$($AccountDir)\$($CA.Host)\$($InternalAccountIdentifier) - $($AccHash).json"
+    
+    # Loading our AccountKey - still Rsa
+    [System.Security.Cryptography.RSA] $AccountKey = Get-RSACng -Name $AccHash
+    
+    # Load CA / Directory Informations
+    [hashtable] $Directory = Get-ACMEDirectory $CA
+
+    
+    # Creating Directories
+    if (-not $BaseDir.Exists) { die -Message "BaseDir does not exist: $BaseDir" }
+    if (-not $CertDir.Exists) { New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null }
+    if (-not ([System.IO.DirectoryInfo] "$($AccountDir)\$($CA.Host)").Exists) { New-Item -Type Directory -Path "$($AccountDir)\$($CA.Host)" -Force | Out-Null }
+    
+    Create-Lock
+    Verify-ACMELicense
+    Verify-ACMERegistration
 }
 Process {
     try {
@@ -1242,13 +1222,13 @@ Process {
         }
 
         # Export
-        if ($ExportPfx) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).pfx", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $ExportPassword)) }
-        if ($ExportPkcs12) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).p12", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $ExportPassword)) }
-        if ($ExportCert) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).crt", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)) }
-        if ($ExportPem) { $Cert | ConvertTo-PEM -Public -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).pem" -Encoding $ExportPemEncoding }
-        if ($ExportPemCert) { $Cert | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).cert.pem" -Encoding $ExportPemEncoding }
-        if ($ExportPemKey) { $Cert | ConvertTo-PEM -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).key.pem" -Encoding $ExportPemEncoding }
-        if ($ExportIssuerPem) { $Cert | Get-CertificateIssuerCertificate | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).chain.pem" -Encoding $ExportPemEncoding }
+        if ($ExportPfx) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).$($AccHash).pfx", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $ExportPassword)) }
+        if ($ExportPkcs12) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).$($AccHash).p12", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, $ExportPassword)) }
+        if ($ExportCert) { [System.IO.File]::WriteAllBytes("$($CertDir.FullName)\$($Domain).$($AccHash).crt", $Cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)) }
+        if ($ExportPem) { $Cert | ConvertTo-PEM -Public -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).$($AccHash).pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemCert) { $Cert | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).$($AccHash).cert.pem" -Encoding $ExportPemEncoding }
+        if ($ExportPemKey) { $Cert | ConvertTo-PEM -Private | Out-File -FilePath "$($CertDir.FullName)\$($Domain).$($AccHash).key.pem" -Encoding $ExportPemEncoding }
+        if ($ExportIssuerPem) { $Cert | Get-CertificateIssuerCertificate | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).$($AccHash).chain.pem" -Encoding $ExportPemEncoding }
 
         $Cert
     } catch { die -Exception $_ }

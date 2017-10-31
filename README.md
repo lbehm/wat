@@ -56,7 +56,7 @@ Force update of the account information (maybe you fiddled with the `account.jso
 ###### -RenewCertificate
 Force renew of certificate even if it is longer valid than value in RenewDays
 ###### -RecreateCertificate
-Create complete new private key and certificate (useful when changing `-KeyAlgo`)
+Create complete new private key and certificate
 ###### -RenewPrivateKey
 Regenerate private keys instead of just signing new certificates on renewal
 ###### -OcspMustStaple
