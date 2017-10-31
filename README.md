@@ -1,4 +1,4 @@
-# WAT - That Windows ACME Tool
+# WAT - Windows ACME Tool
 
 [![Join the chat at https://gitter.im/wat-ps/Lobby](https://badges.gitter.im/wat-ps/Lobby.svg)](https://gitter.im/wat-ps/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 

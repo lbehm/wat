@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-WAT - That Windows ACME Tool
+WAT - Windows ACME Tool
 
 .DESCRIPTION
 This is a client for signing certificates with an ACME-server implemented as a single powershell script.
@@ -224,30 +224,49 @@ Param (
     [System.Security.Cryptography.X509Certificates.StoreLocation] $Context = [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
 )
 Begin {
-    # ERROR HANDLING FUNTIONS
-    function die([string]$Message = "", [int]$ExitCode = 1, [int]$EventId = 0, [string]$LogName = "Windows PowerShell", [string]$Source = "PowerShell", [int]$Category = 0, [System.Diagnostics.EventLogEntryType]$EntryType = [System.Diagnostics.EventLogEntryType]::Error, [switch] $DontRemoveLock) {
-        Write-Eventlog -EntryType $EntryType -LogName $LogName -Source $Source -Category $Category -EventId $EventId -Message "[$AppName] $($Message)"
-        Write-Host $Message -ForegroundColor Red -BackgroundColor Black
-        if (-not $DontRemoveLock) { Remove-Lock }
-        Exit $ExitCode
-    }
-    function Generate-ErrorMessage([System.Management.Automation.ErrorRecord]$Exception) {
+    function die {
+        param(
+            [Parameter(Position = 0, ParameterSetName = 'Exception')]
+            [System.Management.Automation.ErrorRecord] $Exception,
+            [Parameter(Position = 0, ParameterSetName = 'Acme')]
+            $ACMEError,
+            [Parameter(Position = 0, ParameterSetName = 'Message')]
+            [string] $Message = "",
+            [int] $ExitCode = 1,
+            [int] $EventId = 0,
+            [string] $LogName = "Windows PowerShell",
+            [string] $Source = "PowerShell",
+            [int] $Category = 0,
+            [System.Diagnostics.EventLogEntryType] $EntryType = [System.Diagnostics.EventLogEntryType]::Error,
+            [switch] $DontRemoveLock
+        )
         try {
-            $FullDescription = "$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
-            $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
-            if ($Exception.ErrorDetails -ne $null) {
-                $FullDescription += "`n$($Exception.ErrorDetails.Message)"
+            [string] $FullDescription = "[$($AppName)] $($Message)"
+            switch ($PSCmdlet.ParameterSetName) {
+                'Exception' {
+                    $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).FullyQualifiedErrorId)"
+                    $FullDescription += "`nExceptionMessage: $(([System.Management.Automation.ErrorRecord]$Exception).Exception.Message)"
+                    if ($Exception.ErrorDetails -ne $null) {
+                        $FullDescription += "`n$($Exception.ErrorDetails.Message)"
+                    }
+                    $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
+                    $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
+                    $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
+                }
+                'Acme' {
+                }
             }
-            $FullDescription += "`n$(([System.Management.Automation.ErrorRecord]$Exception).InvocationInfo.PositionMessage)"
-            $FullDescription += "`nCategoryInfo: $(([System.Management.Automation.ErrorRecord]$Exception).CategoryInfo.GetMessage())"
-            $FullDescription += "`nStackTrace:`n$(([System.Management.Automation.ErrorRecord]$Exception).ScriptStackTrace)`n$(([System.Management.Automation.ErrorRecord]$Exception).Exception.StackTrace)"
-            $FullDescription
+            Write-Eventlog -EntryType $EntryType -LogName $LogName -Source $Source -Category $Category -EventId $EventId -Message $FullDescription
+            Write-Host $FullDescription -ForegroundColor Red -BackgroundColor Black
+            if (-not $DontRemoveLock) { Remove-Lock }
+            Exit $ExitCode
         } catch {
             Write-Host " X An unexpected Error occured resulting in another error while handling your first error."
-            die $_.FullyQualifiedErrorId
+            Write-Host $_.FullyQualifiedErrorId
+            Exit $ExitCode
         }
     }
-    trap [Exception] { die -Message (Generate-ErrorMessage $_) }
+    trap [Exception] { die -Exception $_ }
     Set-PSDebug -Strict
     Set-StrictMode -Version 3
     $ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
@@ -255,13 +274,13 @@ Begin {
     
     function Create-Lock([System.IO.FileInfo] $Path = $LockFile) {
         if ($NoLock) { return }
-        if ($Path.Exists) {die "Lock file $Path present, aborting." -DontRemoveLock}
+        if ($Path.Exists) {die -Message "Lock file $Path present, aborting." -DontRemoveLock}
         
         try {
             [IO.File]::OpenWrite($Path).Close()
             $PID | Out-File $Path
         } catch {
-            die "LOCKFILE $Path is not writable, aborting."
+            die -Message "LOCKFILE $Path is not writable, aborting."
         }
     }
     function Remove-Lock([System.IO.FileInfo] $Path = $LockFile) {
@@ -282,19 +301,13 @@ Begin {
         try {
             $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
         } catch [System.Net.WebException] {
-            if ($_.ErrorDetails.Message.IndexOf("No registration exists matching provided key") -ge 0 -or
-                $_.ErrorDetails.Message.IndexOf("Request signing key did not match registration key") -ge 0) {
-                if ($AutoFix) {
-                    Write-Host " ! Account is lost possibly due to mismatching account key"
-                    Write-Host " ! AutoFix: applying -ResetRegistration"
-                    Create-ACMERegistration (Get-AccountConfig|ConvertTo-Hashtable)
-                    $resp = Invoke-WebRequest -Uri $Uri -Method $Method -Body $json -ContentType 'application/json' -UseBasicParsing -UserAgent $UserAgent
-                    Write-Host " + AutoFix: successful"
-                }
-                else { die "Local account data is corrupt. Please recreate account with -ResetRegistration" }
-            } else {
-                throw $_
+            $acmeError = $_.ErrorDetails.Message | ConvertFrom-Json
+            if ($acmeError -ne $null) {
+                $errType = $acmeError.type.Split(':')|Select-Object -Last 1
+                Write-Host " ! Error[$($errType)]: $($acmeError.detail)"
+                throw $errType
             }
+            die -Exception $_
         }
         $resp.Content|ConvertFrom-Json
     }
@@ -505,7 +518,7 @@ Begin {
         $ret += $Data
         $ret
     }
-    function Encode-ASN1Integer([Parameter(Position = 0, ParameterSetName='Int')] [int] $Data, [Parameter(Position = 0, ParameterSetName='Bytes')] [byte[]] $Bytes) {
+    function Encode-ASN1Integer([Parameter(Position = 0, ParameterSetName = 'Int')] [int] $Data, [Parameter(Position = 0, ParameterSetName = 'Bytes')] [byte[]] $Bytes) {
         if ($PSCmdlet.ParameterSetName -eq 'Int') {
             [byte[]] $val = [System.BitConverter]::GetBytes($Data)
             if ([System.BitConverter]::IsLittleEndian) {[array]::Reverse($val)}
@@ -574,15 +587,7 @@ Begin {
         $ret
     }
     function Get-AccountConfig {
-        Get-Content -Path $AccountConfig|ConvertFrom-Json
-        #|ConvertTo-Hashtable
-    }
-    function Set-AccountConfig($Config, [Switch] $Save) {
-        $Config|ConvertTo-Json -Compress|Out-File -FilePath $AccountConfig
-
-        if ($Save) {
-            Update-ACMERegistration
-        }
+        Get-Content -Path $AccountConfig | ConvertFrom-Json | ConvertTo-Hashtable
     }
     function Verify-ACMELicense {
         [String] $License = $Directory.termsOfService
@@ -593,31 +598,31 @@ Begin {
             if ($config.agreement -ne $License) {
                 if ($AcceptTerms) {
                     $config.agreement = $License
-                    Set-AccountConfig -Config $config -Save
+                    Update-ACMERegistration -Config $config
                 } else {
-                    die "The terms of service changed.`nTo use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
+                    die -Message "The terms of service changed.`nTo use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
                 }
             }
         } elseif (!$AcceptTerms) {
-            die "To use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
+            die -Message "To use this certificate authority you have to agree to their terms of service which you can find here: $License`nTo accept these terms of service use -AcceptTerms."
         }
     }
     function Verify-ACMERegistration {
         if (-not $AccountConfig.Exists -or $ResetRegistration) {
             return Create-ACMERegistration
         }
-        if ($RenewRegistration) {
-            return Update-ACMERegistration
-        }
 
         # check $Contact for changes
         if ($Contact -ne $null) {
             $config = Get-AccountConfig
-            if ($Contact.Count -ne $config.contact.Count -or
-               ($Contact.Count -gt 0 -and ($Contact|? {$config.contact.IndexOf($_) -eq -1}) -eq $null )) {
-                $config.Contact = $Contact
-                return Set-AccountConfig -Config $config -Save
+            if (-not (Compare-Lists $Contact $config.contact)) {
+                $config.contact = $Contact
+                return Update-ACMERegistration -Config $config
             }
+        }
+
+        if ($RenewRegistration) {
+            return Update-ACMERegistration
         }
     }
     function Create-ACMERegistration([hashtable] $Config) {
@@ -631,32 +636,70 @@ Begin {
             }
 
             $resp = Invoke-SignedWebRequest -Uri $Directory.newAccount -Resource new-reg -Payload $req
-        } catch [System.Net.WebException] {
-            if ($_.ErrorDetails.Message.IndexOf("Registration key is already in use") -ge 0) {
-                die "Registration key is already in use. Use -ResetRegistration"
-            } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
-                die "E-Mail domain verification failed! Check your e-mail address!"
-            } else {
-                throw $_
+        } catch {
+            switch ($_.Exception.Message) {
+                'invalidEmail' {
+                    if ($AutoFix) {
+                        Write-Host " ! AutoFix: removing Contact from request. You will not receive notifications!"
+                        $Config.contact = $null
+                        Update-ACMERegistration $Config
+                        Write-Host " + AutoFix: successful"
+                        return
+                    }
+                    die -Message "Email domain verification failed! Check your email address!"
+                }
+                'malformed' { # id in url is missing or -lt 0; possible reason I can think of: (re)moved account file => only rescue would be creation of new account
+                    if ($AutoFix) {
+                        Write-Host " ! AutoFix: applying -ResetRegistration and recreating account"
+                        Create-ACMERegistration $Config
+                        Write-Host " + AutoFix: successful"
+                        return
+                    }
+                    die -Message "Local account data is corrupt. Please recreate account with -ResetRegistration"
+                }
             }
+            die -Exception $_
         }
         $resp.agreement = $Directory.termsOfService
-        Set-AccountConfig -Config $resp
+        $resp | ConvertTo-Json -Compress | Out-File -FilePath $AccountConfig
     }
-    function Update-ACMERegistration {
-        $config = Get-AccountConfig | ConvertTo-Hashtable
+    function Update-ACMERegistration($Config = (Get-AccountConfig)) {
         try {
-            $resp = Invoke-SignedWebRequest -Uri ($Directory.account + $config.id) -Resource reg -Payload $config
-        } catch [System.Net.WebException] {
-            if ($_.ErrorDetails.Message.IndexOf("Registration ID must be an integer") -ge 0) {
-                die "Local account data is corrupt. Please recreate account with -ResetRegistration"
-            } elseif ($_.ErrorDetails.Message.IndexOf("DNS problem: NXDOMAIN looking up MX for") -ge 0) {
-                die "E-Mail domain verification failed! Check your e-mail address!"
-            } else {
-                throw $_
+            $resp = Invoke-SignedWebRequest -Uri ($Directory.account + $Config.id) -Resource reg -Payload $Config
+        } catch {
+            switch ($_.Exception.Message) {
+                'invalidEmail' {
+                    if ($AutoFix) {
+                        Write-Host " ! AutoFix: removing Contact from request. You will not receive notifications!"
+                        $Config.contact = $null
+                        Update-ACMERegistration $Config
+                        Write-Host " + AutoFix: successful"
+                        return
+                    }
+                    die -Message "Email domain verification failed! Check your email address!"
+                }
+                'malformed' { # id in url is missing or -lt 0; possible reason I can think of: (re)moved account file => only rescue would be creation of new account
+                    if ($AutoFix) {
+                        Write-Host " ! AutoFix: applying -ResetRegistration and recreating account"
+                        Create-ACMERegistration $Config
+                        Write-Host " + AutoFix: successful"
+                        return
+                    }
+                    die -Message "Local account data is corrupt. Please recreate account with -ResetRegistration"
+                }
+                'unauthorized' { # wrong account key; maybe copied account directory to different server or runs in different user context?
+                    if ($AutoFix) {
+                        Write-Host " ! AutoFix: applying -ResetRegistration and recreating account"
+                        Create-ACMERegistration $Config
+                        Write-Host " + AutoFix: successful"
+                        return
+                    }
+                    die -Message "Local account data is corrupt. Please recreate account with -ResetRegistration"
+                }
             }
+            die -Exception $_
         }
-        Set-AccountConfig -Config $resp
+        $resp | ConvertTo-Json -Compress | Out-File -FilePath $AccountConfig
     }
     function Encode-UrlBase64 {
         Param(
@@ -701,6 +744,18 @@ Begin {
     function ConvertTo-Hashtable([Parameter(Mandatory=$true, ValueFromPipeline=$true)] $Object) {
         $Object.psobject.Properties|% -Begin {[hashtable] $h = @{}} -Process { $h[$_.Name] = $_.Value } -End { $h }
     }
+    function Compare-Lists([array] $a = $null, [array] $b = $null) {
+        if ($a -eq $null -and $b -eq $null) { return $true } # boath are $null
+        if ($a -eq $null -or $b -eq $null) { return $false } # only one of them $null?
+
+        if ($a.Count -ne $b.Count) { return $false }
+        for ([int] $i = 0; $i -lt $a.Count; $i++) {
+            if ($a.IndexOf($b[$i]) -eq -1 -or $b.IndexOf($a[$i]) -eq -1) {
+                return $false
+            }
+        }
+        $true
+    }
     function Get-JWKHeader([System.Security.Cryptography.RSACng] $Rsa = $Script:AccountRsa, [String] $Nonce, [Switch] $JSON, [Switch] $Base64) {
         $export = $Rsa.ExportParameters($false)
     
@@ -744,10 +799,10 @@ Begin {
     }
     function Verify-Config() {
         if ($ChallengeType -eq "dns-01" -and $onChallenge -eq $null) { Write-Host " ! Challenge type dns-01 should be used with an automated -onChallenge script for deployment." }
-        if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
+        if ($ChallengeType -eq "http-01" -and !$WellKnown.Exists -and $onChallenge -eq $null) { die -Message "WellKnown directory doesn't exist, please create $WellKnown and set appropriate permissions." }
 
         # Creating Directories
-        if (-not $BaseDir.Exists) { die "BaseDir does not exist: $BaseDir" }
+        if (-not $BaseDir.Exists) { die -Message "BaseDir does not exist: $BaseDir" }
         if (-not $CertDir.Exists) { New-Item -Type Directory -Path $CertDir.FullName -Force | Out-Null }
         if (-not ([System.IO.DirectoryInfo] "$AccountDir\$CAHASH").Exists) { New-Item -Type Directory -Path "$AccountDir\$CAHASH" -Force | Out-Null }
     }
@@ -783,10 +838,8 @@ Begin {
         Write-Host " + Checking domain names of existing cert... " -NoNewline
         [string[]]$DnsNameList = ($Domain)
         if ($SAN -ne $null) { $DnsNameList += $SAN }
-        if ($cert.DnsNameList[0] -eq $Domain -and
-            $cert.DnsNameList.Count -eq ($DnsNameList.Count) -and
-            ([string[]]($DnsNameList|? {$cert.DnsNameList.IndexOf($_) -ge 0})).Count -eq $DnsNameList.Count # cryptic way to check if dns name lists are equal
-        ) {
+        
+        if ($cert.FriendlyName -eq (Get-CertificateFriendlyName -Domain $Domain) -and (Compare-Lists $DnsNameList ($cert.DnsNameList|% {$_.ToString()}))) {
             Write-Host "unchanged."
         } else {
             Write-Host "changed!"
@@ -812,13 +865,12 @@ Begin {
     }
     function Get-CertificateFriendlyName([String] $Domain) { "$($Domain) - $($CAHASH)" }
     function Get-LastCertificate([String] $Domain, [string[]] $SAN) {
+        [string[]] $DnsNameList = ($Domain)
+        if ($SAN -ne $null) { $DnsNameList += $SAN }
+
         [System.Security.Cryptography.X509Certificates.X509Certificate2](gci "Cert:\$($Context)\My" |? {
             $_.FriendlyName -eq (Get-CertificateFriendlyName $Domain) -and 
-            $_.HasPrivateKey -and
-            (
-                (($SAN -eq $null -or $SAN.Count -eq 0) -and $_.DnsNameList.Count -eq 1) -or
-                ($SAN -ne $null -and ($SAN.Count +1) -eq $_.DnsNameList.Count -and ([string[]]($_.DnsNameList|? {$SAN.IndexOf($_) -ge 0 -or $_ -eq $Domain})).Count -eq $_.DnsNameList.Count)
-            )
+            $_.HasPrivateKey -and (Compare-Lists ($_.DnsNameList|% {$_.ToString()}) $DnsNameList)
         }|Sort-Object -Property NotAfter|Select-Object -Last 1)
     }
     function Get-CertificateIssuerCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
@@ -855,50 +907,54 @@ Begin {
     }
     function Verify-ACMEAuthorization([String] $Domain) {
         Write-Host " + Requesting challenge for $($Domain)..."
-        $challenge = (Invoke-SignedWebRequest -Uri $Directory.newAuthz -Resource "new-authz" -Payload @{
+        $challenges = (Invoke-SignedWebRequest -Uri $Directory.newAuthz -Resource "new-authz" -Payload @{
             "identifier" = @{
                 "type" = "dns";
                 "value" = $Domain;
             }
-        }).challenges|? {$_.type -eq $ChallengeType}
-        if ($challenge.status -eq "valid") {
+        }).challenges
+        if (($challenges|? {$_.status -eq "valid"}) -ne $null) { # any valid challange is ok
             Write-Host " + Already validated!"
-        } elseif ($challenge.status -eq "pending") {
-            $keyAuthorization = "$($challenge.token).$(Get-Thumbprint)"
+            return
+        }
+        $challenge = $challenges|? {$_.type -eq $ChallengeType}
+        if ($challenge.status -ne "pending") { die -Message "Challenge status is '$($challenge.status)'. Can't continue!" }
 
-            switch ($ChallengeType) {
-                'http-01' {
-                    &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host
-                }
-                'dns-01' {
-                    $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::ASCII.GetBytes($keyAuthorization)))
-                    &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
-                }
-            }
+        $keyAuthorization = "$($challenge.token).$(Get-Thumbprint)"
 
-            Write-Host " + Responding to challenge for $($Domain)..."
-            $resp = Invoke-SignedWebRequest -Uri $challenge.uri -Resource 'challenge' -Payload @{
-                "keyAuthorization" = $keyAuthorization;
+        switch ($ChallengeType) {
+            'http-01' {
+                &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host
             }
-            while ($resp.status -eq "pending") {
-                Start-Sleep -Seconds 1
-                $resp = (Invoke-WebRequest -Uri $challenge.uri -Method Get -UseBasicParsing).Content|ConvertFrom-Json
+            'dns-01' {
+                $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::ASCII.GetBytes($keyAuthorization)))
+                &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
             }
+        }
 
-            switch ($ChallengeType) {
-                'http-01' {
-                    &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host
-                }
-                'dns-01' {
-                    &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host
-                }
-            }
+        Write-Host " + Responding to challenge for $($Domain)..."
+        $resp = Invoke-SignedWebRequest -Uri $challenge.uri -Resource 'challenge' -Payload @{
+            "keyAuthorization" = $keyAuthorization;
+        }
 
-            if ($resp.status -eq "valid") {
-                Write-Host " + Challenge is valid!"
-            } elseif ($resp.status -eq "invalid") {
-                die ("Challenge is invalid`n" + $resp.error)
+        while ($resp.status -eq "pending") {
+            Start-Sleep -Seconds 1
+            $resp = (Invoke-WebRequest -Uri $challenge.uri -Method Get -UseBasicParsing).Content|ConvertFrom-Json
+        }
+
+        switch ($ChallengeType) {
+            'http-01' {
+                &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host
             }
+            'dns-01' {
+                &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host
+            }
+        }
+
+        if ($resp.status -eq "valid") {
+            Write-Host " + Challenge is valid!"
+        } elseif ($resp.status -eq "invalid") {
+            die -Message ("Challenge is invalid`n" + $resp.error)
         }
     }
     function Create-CSR([String] $Domain, [String[]] $SAN) {
@@ -1095,7 +1151,7 @@ Begin {
         }
     }
     
-    [string] $VERSION = "0.2.2.2"
+    [string] $VERSION = "0.2.2.3"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1156,6 +1212,11 @@ Begin {
                     Write-Host " ! Please deploy a DNS TXT record under the name '$($FQDN)' with the following value: $($KeyAuthorization)"
                     Write-Host " ! Once this is deployed, press Enter to continue"
                     Read-Host | Out-Null
+                    Write-Host "Testing DNS record"
+                    while (($rec = Resolve-DnsName -Name $FQDN -Type TXT -Server 8.8.8.8, 8.8.4.4 -NoHostsFile -DnsOnly) -eq $null -or -not ($rec |? {$_.Text -eq $KeyAuthorization})) {
+                        Write-Host -NoNewline "."
+                        sleep -Seconds 3
+                    }
                 }
             }
             if ($onChallengeCleanup -eq $null) {
@@ -1170,7 +1231,7 @@ Begin {
 Process {
     try {
         if ($Domains.Count -lt 1) {
-            die "No Domains found in parameter"
+            die -Message "No Domains found in parameter"
         }
     
         [String] $Domain = $Domains.Get(0)
@@ -1196,7 +1257,7 @@ Process {
         if ($ExportIssuerPem) { $Cert | Get-CertificateIssuerCertificate | ConvertTo-PEM -Public | Out-File -FilePath "$($CertDir.FullName)\$($Domain).chain.pem" -Encoding $ExportPemEncoding }
 
         $Cert
-    } catch { die -Message (Generate-ErrorMessage $_) }
+    } catch { die -Exception $_ }
 }
 End {
     Remove-Lock
