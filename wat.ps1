@@ -146,7 +146,7 @@ Param (
     [int] $RenewDays = 30,
 
     # Which challenge should be used? (default: http-01)
-    [ValidateSet("http-01", "dns-01")]
+    [ValidateSet("http-01", "dns-01", "tls-sni-01")]
     [String] $ChallengeType = "http-01",
 
     # Currently only acme1-boulder dialect is tested
@@ -205,8 +205,8 @@ Param (
 
     # Script to be invoked with challenge token receiving the following parameter:
     # Domain - The domain name you want to verify
-    # Token / FQDN - The file name for http-01 or domain name for dns-01 challenges
-    # KeyAuthorization - The value you have to place in the file or dns TXT record
+    # Token / FQDN - The file name for http-01 or domain name for dns-01 and tls-sni-01 challenges
+    # KeyAuthorization / Certificate - The value you have to place in the file or dns TXT record or the Certificate for tls-sni-01 challenges
     [System.Management.Automation.ScriptBlock] $onChallenge,
 
     # Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
@@ -847,7 +847,7 @@ Begin {
         [System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert = Get-LastCertificate -Domain $Domain -SAN $SAN
         
         if ($RecreateCertificate -or $OldCert -eq $null) {
-            Create-CSR -Domain $Domain -SAN $SAN
+            Create-Certificate -Domain $Domain -SAN $SAN
         } else {
             Renew-Certificate -OldCert $OldCert
         }
@@ -867,13 +867,19 @@ Begin {
         $challenge = $challenges|? {$_.type -eq $ChallengeType}
         if ($challenge.status -ne "pending") { die -Message "Challenge status is '$($challenge.status)'. Can't continue!" }
 
-        $keyAuthorization = "$($challenge.token).$(Get-ACMEPrivateKeyThumbprint)"
+        [string] $keyAuthorization = "$($challenge.token).$(Get-ACMEPrivateKeyThumbprint)"
 
         switch ($ChallengeType) {
             'http-01' { &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host }
             'dns-01' {
-                $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::ASCII.GetBytes($keyAuthorization)))
+                [string] $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyAuthorization)))
                 &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
+            }
+            'tls-sni-01' {
+                [string] $sniAuthorization = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyAuthorization))).Replace('-','').ToLower()
+                [string] $sniFqdn = "$($sniAuthorization.Substring(0, 32)).$($sniAuthorization.Substring(32, 32)).acme.invalid"
+                [System.Security.Cryptography.X509Certificates.X509Certificate2] $sniCert = Create-Certificate -Domain $sniFqdn -SelfSigned
+                &$onChallenge "$($Domain)" "$sniFqdn" $sniCert | Write-Host
             }
         }
 
@@ -890,6 +896,7 @@ Begin {
         switch ($ChallengeType) {
             'http-01' { &$onChallengeCleanup "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" "$($resp.status)" | Write-Host }
             'dns-01'  { &$onChallengeCleanup "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" "$($resp.status)" | Write-Host }
+            'tls-sni-01'  { &$onChallengeCleanup "$($Domain)" "$sniFqdn" $sniCert "$($resp.status)" | Write-Host }
         }
 
         if ($resp.status -eq "valid") {
@@ -898,7 +905,7 @@ Begin {
             die -Message ("Challenge is invalid`n" + " ! Error[$($resp.error.type.Split(':')|Select-Object -Last 1)]: $($resp.error.detail)")
         }
     }
-    function Create-CSR([String] $Domain, [String[]] $SAN) {
+    function Create-Certificate([String] $Domain, [String[]] $SAN, [Switch] $SelfSigned) {
         # setup defaults
         [int] $Size = $KeySize
         [string] $HashAlgo = "SHA256"
@@ -942,7 +949,8 @@ Begin {
         $pk.Create()
     
         # create request object
-        $request = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10
+        $request = if ($SelfSigned) { New-Object -ComObject X509Enrollment.CX509CertificateRequestCertificate }
+                               else { New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10 }
         $request.InitializeFromPrivateKey($(
             if ($Context -eq [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine) {
                 3 # ContextAdministratorForceMachine
@@ -1013,12 +1021,6 @@ Begin {
         # finish Pkcs10 request
         $request.Encode()
 
-        # export request
-        [String] $csr = $request.RawData([int](0x1 <#XCN_CRYPT_STRING_BASE64#> -bor 0x40000000 <#XCN_CRYPT_STRING_NOCRLF#>)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-        
-        # push csr to CA and fetch certificate
-        [String] $der = Sign-CSR -CSR $csr
-    
         # create enrollment class
         $enroll = New-Object -ComObject X509Enrollment.CX509Enrollment
         $enroll.InitializeFromRequest($request)
@@ -1030,13 +1032,26 @@ Begin {
         # and.. somehow removes the request from the cert store in the next InstallResponse step?
         # What I know is that, in step by step debugging the cert request is placed in your cert store / requests
         # and if you don't do this step your private key isn't stored, resulting in a cert without key
-        $enroll.CreateRequest(1) | Out-Null
+        
+        if ($SelfSigned) {
+            $enroll.InstallResponse([int](0x2), $enroll.CreateRequest(), [int](0x1 <#XCN_CRYPT_STRING_BASE64#>), "")
+        } else {
+            # export request
+            [String] $csr = $enroll.CreateRequest(0x1 <#XCN_CRYPT_STRING_BASE64#> -bor 0x40000000 <#XCN_CRYPT_STRING_NOCRLF#>).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            #[String] $csr = $request.RawData([int](0x1 <#XCN_CRYPT_STRING_BASE64#> -bor 0x40000000 <#XCN_CRYPT_STRING_NOCRLF#>)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            # push csr to CA and fetch certificate
+            [String] $der = Sign-CSR -CSR $csr
+            $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
+        }
 
-        $enroll.InstallResponse([int](0x1 -bor 0x4), $der, [int](0x1), "")
 
         # get the thumbprint of the new certificate, find the matching certificate in the cert store and return it
         [string] $thumbprint = [System.BitConverter]::ToString(([System.Security.Cryptography.SHA1Cng]::Create().ComputeHash([convert]::FromBase64String($enroll.Certificate(0x40000001))))).Replace('-', '')
-        gci "Cert:\$($Context)\" -Recurse|? {$_ -is [System.Security.Cryptography.X509Certificates.X509Certificate] -and $_.Thumbprint -eq $thumbprint}
+        gci "Cert:\$($Context)\" -Recurse|? {
+            $_ -is [System.Security.Cryptography.X509Certificates.X509Certificate] -and
+            (Split-Path $_.PSParentPath -Leaf) -ne "CA" -and
+            $_.Thumbprint -eq $thumbprint
+        }
     }
     function Renew-Certificate([System.Security.Cryptography.X509Certificates.X509Certificate2] $OldCert) {
         Write-Host " + Creating renewal request. Based on $($OldCert.Thumbprint)"
@@ -1090,7 +1105,7 @@ Begin {
     }
     function Sign-CSR([String] $CSR) { [Convert]::ToBase64String((Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{ "csr" = $CSR })) }
     
-    [string] $VERSION = "0.3.0.0"
+    [string] $VERSION = "0.3.0.1"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1122,7 +1137,7 @@ Begin {
             }
             if ($onChallengeCleanup -eq $null) {
                 $onChallengeCleanup = {
-                    Param([String] $Domain, [String] $Token, [String] $KeyAuthorization)
+                    Param([String] $Domain, [String] $Token, [String] $KeyAuthorization, [String] $Status)
                     Remove-Item -Path "$($WellKnown.FullName)\$($Token)" -Force
                 }
             }
@@ -1149,8 +1164,28 @@ Begin {
             }
             if ($onChallengeCleanup -eq $null) {
                 $onChallengeCleanup = {
-                    Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization)
+                    Param([String] $Domain, [String] $FQDN, [String] $KeyAuthorization, [String] $Status)
                     Write-Host " ! You can now remove the DNS TXT record $($FQDN) with the following value: $($KeyAuthorization)"
+                }
+            }
+        }
+        'tls-sni-01' {
+            if ($onChallenge -eq $null) {
+                Write-Host " ! Challenge type tls-sni-01 should be used with an automated -onChallenge script for deployment."
+                # manual challenge handling - for testing purposes only
+                $onChallenge = {
+                    Param([String] $Domain, [String] $FQDN, [System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert)
+                    Write-Host " ! Please set up a SSL binding for FQDN $($FQDN) with the following Certificate:"
+                    Write-Host "   FriendlyName: $($Cert.FriendlyName)"
+                    Write-Host "   Thumbprint:   $($Cert.Thumbprint)"
+                    Write-Host " ! Once this is deployed, press Enter to continue"
+                    Read-Host | Out-Null
+                }
+            }
+            if ($onChallengeCleanup -eq $null) {
+                $onChallengeCleanup = {
+                    Param([String] $Domain, [String] $FQDN, [System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert, [String] $Status)
+                    Write-Host " ! You can now remove the SSL binding with the FQDN $($FQDN)"
                 }
             }
         }
