@@ -22,6 +22,20 @@ In other terms it is a
 * is more or less readable
 * a useful way to show off some powershell skills
 
+## Requirements
+##### Windows 10 / Windows Server 2016
+You are good to go!
+##### Windows 7 / Windows Server 2008 R2
+Make sure your system is up to date and has at least PowerShell 4 installed!
+1. Find your PowerShell Version by executing `Get-Host` in a PowerShell Window.
+2. If the Version shows 4.0 or greater everything is fine and you should continue in the [examples section](#examples).
+3. If not (2.0 or 3.0) you should install /Windows Management Framework 4.0/. PowerShell 4.0 is part of it.
+   1. Go to the [Windows Download page](https://www.microsoft.com/en-us/download/details.aspx?id=40855)
+   2. Select your language, click Download
+   3. Select `Windows6.1-KB2819745-x64-MultiPkg.msu` (on 64bit) or `Windows6.1-KB2819745-x86-MultiPkg.msu` (on 32bit Windows)
+   4. Search and Install Windows Updates!
+Note: it isn't possible to export private keys of EC Certificates into Pem format on Windows 7 or Server 2012 R2
+
 ## Acknowledgement
 At this point I want to thank @lukas2511 for his fantastic work in [dehydrated](https://github.com/lukas2511/dehydrated):bangbang:\
 Without his inspirational masterpiece there would be no wat.ps1
@@ -29,7 +43,7 @@ If you looking for a trustworthy slim acme client for linux/unix check out his w
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01|tls-sni-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 The script can take an array of domain names from piped input. Please have a look [at the examples](#examples).
 
@@ -74,7 +88,7 @@ Size of rsa keys (default: `4096`)\
 Possible values are between 2048 and 4096 and a multiple of 64 (e.g. 3072 is possible)
 ###### -RenewDays `<Int32>`
 Minimum days before expiration to automatically renew certificate (default: `30`)
-###### -ChallengeType `[http-01|dns-01]`
+###### -ChallengeType `[http-01|dns-01|tls-sni-01]`
 Which challenge should be used? (default: `http-01`)
 ###### -ACMEVersion `[acme1-boulder|acme2-boulder|acme1]`
 Currently only acme1-boulder dialect is tested
@@ -109,9 +123,9 @@ Export the certificate of the Issuer (e.g. Let'sEncrypt) in Base64 encoded PEM f
 ###### -ExportPemEncoding `[ASCII|UTF8|UTF32|Unicode|...]`
 ###### -onChallenge `<ScriptBlock>`
 Script to be invoked with challenge token receiving the following parameter:
-    Domain            The domain name you want to verify
-    Token / FQDN      The file name for http-01 or domain name for dns-01 challenges
-    KeyAuthorization  The value you have to place in the file or dns TXT record
+    Domain                         The domain name you want to verify
+    Token / FQDN                   The file name for http-01 or domain name for dns-01 and tls-sni-01 challenges
+    KeyAuthorization / Certificate The value you have to place in the file or dns TXT record or the Certificate for tls-sni-01 challenges
 ###### -onChallengeCleanup `<ScriptBlock>`
 Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
 ###### -InternalAccountIdentifier `<String>`
