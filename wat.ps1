@@ -7,7 +7,7 @@ This is a client for signing certificates with an ACME-server implemented as a s
 This tool has no additional requirements.
 This work is inspired by the commonly used linux/unix script dehydrated.
 
-If you are serious about the safty of the crypto stuff, please have a look at the Create-CSR function.
+If you are serious about the safty of the crypto stuff, please have a look at the Create-Certificate function.
 
 This work is published under:
 MIT License
@@ -77,7 +77,7 @@ That's what I call In-Place-Renewal - I didn't find anything on the web to this 
 This script uses only Windows components
 
 For the ACME account a RSACng-Key is used and stored in the system
-For the use in certificates, private keys are generated in the Create-CSR function
+For the use in certificates, private keys are generated in the Create-Certificate function
 
 #>
 Param (
