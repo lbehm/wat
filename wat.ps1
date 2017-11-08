@@ -215,6 +215,11 @@ Param (
     # Internal identifier of the ACME account
     [Parameter(DontShow = $true)]
     [String] $InternalAccountIdentifier = "ACMEDefaultAccount",
+    
+    # Which algorithm should be used for the ACME account key?
+    [Parameter(DontShow = $true)]
+    [ValidateSet("Rsa", "ECDSA_P256", "ECDSA_P384")]
+    [System.Security.Cryptography.CngAlgorithm] $AccountKeyAlgo = [System.Security.Cryptography.CngAlgorithm]::Rsa,
 
     # Try to fix common problems automatically.
     # This includes:
@@ -285,7 +290,7 @@ Begin {
         $Payload.resource = $Resource
         $body = @{
             header = Get-JWKHeader;
-            protected = Get-JWKHeader -Nonce (Get-ACMENonce) -Base64;
+            protected = Encode-UrlBase64 -Object (Get-JWKHeader -Nonce (Get-ACMENonce));
             payload = Encode-UrlBase64 -Object $Payload;
         }
         $body.signature = Get-JWSignature -Value "$($body.protected).$($body.payload)"
@@ -309,32 +314,54 @@ Begin {
         if (-not $resp.Headers.ContainsKey('Replay-Nonce')) {throw "Can't fetch Nonce"}
         $resp.Headers['Replay-Nonce']
     }
-    function Get-JWKHeader([System.Security.Cryptography.RSACng] $Rsa = $AccountKey, [String] $Nonce, [Switch] $JSON, [Switch] $Base64) {
-        $export = $Rsa.ExportParameters($false)
-    
+    function Get-JWKHeader([System.Security.Cryptography.AsymmetricAlgorithm] $PrivateKey = $AccountKey, [String] $Nonce) {
+        $export = $PrivateKey.ExportParameters($false)
         $header = @{
             alg = "RS256";
             jwk = @{
                 kty = "RSA";
-                e = (Encode-UrlBase64 -Bytes $export.Exponent);
-                n = (Encode-UrlBase64 -Bytes $export.Modulus);
             };
         }
+        switch ($PrivateKey.Key.Algorithm.Algorithm) {
+            "RSA" {
+                $header.jwk.e = Encode-UrlBase64 -Bytes $export.Exponent
+                $header.jwk.n = Encode-UrlBase64 -Bytes $export.Modulus
+            }
+            "ECDSA_P256" {
+                $header.alg = "ES256"
+                $header.jwk.kty = "EC"
+                $header.jwk.crv = "P-256"
+                $header.jwk.x = Encode-UrlBase64 -Bytes $export.Q.X
+                $header.jwk.y = Encode-UrlBase64 -Bytes $export.Q.Y
+            }
+            "ECDSA_P384" {
+                $header.alg = "ES384"
+                $header.jwk.kty = "EC"
+                $header.jwk.crv = "P-384"
+                $header.jwk.x = Encode-UrlBase64 -Bytes $export.Q.X
+                $header.jwk.y = Encode-UrlBase64 -Bytes $export.Q.Y
+            }
+            "ECDSA_P521" {
+                $header.alg = "ES512"
+                $header.jwk.kty = "EC"
+                $header.jwk.crv = "P-521"
+                $header.jwk.x = Encode-UrlBase64 -Bytes $export.Q.X
+                $header.jwk.y = Encode-UrlBase64 -Bytes $export.Q.Y
+            }
+        }
     
-        if ($Nonce.Length) {
-            $header.nonce = $Nonce
-        }
+        if ($Nonce -ne "") { $header.nonce = $Nonce }
 
-        if (-not ($JSON -or $Base64)) {
-            return $header
-        } elseif ($Base64){
-            Encode-UrlBase64 -Object $header
-        } else {
-            ConvertTo-Json -Compress -InputObject $header
-        }
+        $header
     }
-    function Get-JWSignature([String] $Value, [System.Security.Cryptography.RSACng] $Rsa = $AccountKey, [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256) {
-        Encode-UrlBase64 -Bytes ($Rsa.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), $Algo, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1))
+    function Get-JWSignature([String] $Value, [System.Security.Cryptography.AsymmetricAlgorithm] $PrivateKey = $AccountKey) {
+        switch ($PrivateKey.Key.Algorithm.Algorithm) {
+            "RSA"        { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256 }
+            "ECDSA_P256" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256 }
+            "ECDSA_P384" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA384 }
+            "ECDSA_P521" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA512 }
+        }
+        Encode-UrlBase64 -Bytes ($PrivateKey.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), $Algo))
     }
     function Get-ACMEDirectory([uri] $Uri) {
         [hashtable] $Directory = @{
@@ -370,59 +397,49 @@ Begin {
     
         $Directory
     }
-    function Get-RSACng([String] $Name, [int] $Size = 4096) {
+    function Get-PrivateKey([string] $Name, [int] $Size = 4096, [System.Security.Cryptography.CngAlgorithm] $Algorithm, [System.Security.Cryptography.CngKeyUsages] $KeyUsage = [System.Security.Cryptography.CngKeyUsages]::Signing, [System.Security.Cryptography.CngExportPolicies] $ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None) {
+        switch ($Algorithm.Algorithm) {
+            "RSA" {
+                [type] $RetType = [System.Security.Cryptography.RSACng]
+            }
+            "ECDSA_P256" {
+                $Size = 256
+                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
+            }
+            "ECDSA_P384" {
+                $Size = 384
+                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
+            }
+            "ECDSA_P521" {
+                $Size = 521
+                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
+            }
+        }
+        
         if ($ResetRegistration -and [System.Security.Cryptography.CngKey]::Exists($Name)) {
             [System.Security.Cryptography.CngKey]::Open($Name).Delete()
         }
         if ([System.Security.Cryptography.CngKey]::Exists($Name)) {
-            return New-Object System.Security.Cryptography.RSACng ([System.Security.Cryptography.CngKey]::Open($Name))
-        } else {
-            $ResetRegistration = $true
-            [System.Security.Cryptography.CngKeyCreationParameters] $keyCreationParams = New-Object System.Security.Cryptography.CngKeyCreationParameters
-            $keyCreationParams.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::AllowPlaintextExport -bor [System.Security.Cryptography.CngExportPolicies]::AllowExport
-            $keyCreationParams.KeyUsage = [System.Security.Cryptography.CngKeyUsages]::AllUsages
-            $keyCreationParams.Parameters.Add([System.Security.Cryptography.CngProperty](New-Object System.Security.Cryptography.CngProperty "Length", ([BitConverter]::GetBytes($Size)), ([System.Security.Cryptography.CngPropertyOptions]::None)))
-        
-            return New-Object System.Security.Cryptography.RSACng ([System.Security.Cryptography.CngKey]::Create([System.Security.Cryptography.CngAlgorithm]::Rsa, $Name, $keyCreationParams))
-        }
-    }
-    function Get-PrivateKey([string] $Name, [int] $Size, [System.Security.Cryptography.CngAlgorithm] $Algorithm = [System.Security.Cryptography.CngAlgorithm]::Rsa) {
-        switch ($Algorithm) {
-            ([System.Security.Cryptography.CngAlgorithm]::Rsa) {
-                [type] $RetType = [System.Security.Cryptography.RSACng]
-            }
-            ([System.Security.Cryptography.CngAlgorithm]::ECDsaP256) {
-                $Size = 256
-                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
-            }
-            ([System.Security.Cryptography.CngAlgorithm]::ECDsaP384) {
-                $Size = 384
-                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
-            }
-        }
-
-        if ([System.Security.Cryptography.CngKey]::Exists($Name)) {
             New-Object -TypeName $RetType.FullName -ArgumentList ([System.Security.Cryptography.CngKey]::Open($Name))
         } else {
-            [System.Security.Cryptography.CngKeyCreationParameters] $keyCreationParams = New-Object System.Security.Cryptography.CngKeyCreationParameters
-            $keyCreationParams.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::AllowPlaintextExport -bor [System.Security.Cryptography.CngExportPolicies]::AllowExport
-            $keyCreationParams.KeyUsage = [System.Security.Cryptography.CngKeyUsages]::AllUsages
-            
+            [System.Security.Cryptography.CngKeyCreationParameters] $keyCreationParams = New-Object System.Security.Cryptography.CngKeyCreationParameters -Property @{
+                "ExportPolicy" = $ExportPolicy;
+                "KeyUsage" = $KeyUsage;
+            }
             $keyCreationParams.Parameters.Add([System.Security.Cryptography.CngProperty](New-Object System.Security.Cryptography.CngProperty "Length", ([BitConverter]::GetBytes($Size)), ([System.Security.Cryptography.CngPropertyOptions]::None)))
-        
-            New-Object -TypeName $RetType.FullName -ArgumentList ([System.Security.Cryptography.CngKey]::Create($CngAlgorithm, $Name, $keyCreationParams))
+            
+            New-Object -TypeName $RetType.FullName -ArgumentList ([System.Security.Cryptography.CngKey]::Create($Algorithm, $Name, $keyCreationParams))
         }
     }
     function Get-ACMEPrivateKeyThumbprint {
-        [System.Security.Cryptography.HashAlgorithm] $Algo = [System.Security.Cryptography.SHA256Cng]::Create()
         $export = $AccountKey.ExportParameters($false)
-        Encode-UrlBase64 -Bytes (
-            $Algo.ComputeHash(
-                [System.Text.Encoding]::UTF8.GetBytes(
-                    '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}'
-                )
-            )
-        )
+        switch ($AccountKey.Key.Algorithm.Algorithm) {
+            "RSA"        { [string] $j = '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}' }
+            "ECDSA_P256" { [string] $j = '{"crv":"P-256","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
+            "ECDSA_P384" { [string] $j = '{"crv":"P-384","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
+            "ECDSA_P521" { [string] $j = '{"crv":"P-521","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
+        }
+        Encode-UrlBase64 -Bytes (([System.Security.Cryptography.SHA256Cng]::Create()).ComputeHash([System.Text.Encoding]::UTF8.GetBytes($j)))
     }
     function Get-CngPrivateKeyFromCertificate([Parameter(Mandatory = $true, ValueFromPipeline = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2] $Cert) {
         # well, by now it should be obvious whats going on here
@@ -924,6 +941,11 @@ Begin {
                 $Size = 384
                 $HashAlgo = "SHA384"
             }
+            ([System.Security.Cryptography.CngAlgorithm]::ECDsaP521) {
+                $algoId.InitializeFromAlgorithmName(3 <#XCN_CRYPT_PUBKEY_ALG_OID_GROUP_ID#>, 0 <#XCN_CRYPT_OID_INFO_PUBKEY_ANY#>, 0 <#AlgorithmFlagsNone#>, "ECDSA_P521")
+                $Size = 521
+                $HashAlgo = "SHA512"
+            }
         }
         Write-Host " + Creating request: ExchangeAlgorithm: $($KeyAlgo.Algorithm), KeySize: $($Size), HashAlgorithm: $($HashAlgo), OCSP-MustStaple: $(if($OcspMustStaple){"On"}else{"Off"})"
 
@@ -1105,7 +1127,7 @@ Begin {
     }
     function Sign-CSR([String] $CSR) { [Convert]::ToBase64String((Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{ "csr" = $CSR })) }
     
-    [string] $VERSION = "0.3.0.1"
+    [string] $VERSION = "0.3.0.2"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1221,8 +1243,21 @@ Begin {
     
     [System.IO.FileInfo] $AccountConfig = "$($AccountDir)\$($CA.Host)\$($InternalAccountIdentifier) - $($AccHash).json"
     
-    # Loading our AccountKey - still Rsa
-    [System.Security.Cryptography.RSA] $AccountKey = Get-RSACng -Name $AccHash
+    # Loading our AccountKey
+    if (-not $ResetRegistration -and $AccountConfig.Exists -and ($key = (Get-AccountConfig).key) -ne $null) {
+        switch ($key.kty) {
+            'RSA' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::Rsa)}
+            'EC' {
+                switch ($key.crv) {
+                    'P-256' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP256)}
+                    'P-384' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP384)}
+                    'P-521' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP521)}
+                }
+            }
+        }
+    } else {
+        [System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm $AccountKeyAlgo
+    }
     
     # Load CA / Directory Informations
     [hashtable] $Directory = Get-ACMEDirectory $CA
