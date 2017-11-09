@@ -207,6 +207,10 @@ Param (
 
     # Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
     [System.Management.Automation.ScriptBlock] $onChallengeCleanup,
+
+    # Don't verify the DNS record after executing onChallenge (applies only to dns-01 challenges)
+    [Parameter(DontShow = $true)]
+    [switch] $NoDnsTest,
     
     # Internal identifier of the ACME account
     [Parameter(DontShow = $true)]
@@ -872,7 +876,22 @@ Begin {
             'http-01' { &$onChallenge "$($Domain)" "$($challenge.token)" "$($keyAuthorization)" | Write-Host }
             'dns-01' {
                 [string] $dnsAuthorization = Encode-UrlBase64 -Bytes ([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyAuthorization)))
-                &$onChallenge "$($Domain)" "_acme-challenge.$($Domain)" "$($dnsAuthorization)" | Write-Host
+                [string] $dnsChallengeDN = "_acme-challenge.$($Domain)"
+                &$onChallenge "$($Domain)" "$($dnsChallengeDN)" "$($dnsAuthorization)" | Write-Host
+
+                if (-not $NoDnsTest) {
+                    if ((Get-Command -Verb Resolve -Noun DnsName) -ne $null) {
+                        Write-Host "Testing DNS record"
+                        [string[]] $dnsServer = '8.8.8.8', '8.8.4.4' # use public servers
+                        if (($rec = Resolve-DnsName -Name $dnsChallengeDN -Type TXT -Server $dnsServer -NoHostsFile -DnsOnly -ErrorAction SilentlyContinue) -eq $null -and ($Error|Select-Object -First 1).CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::OperationTimeout) {$dnsServer = @()} # can't reach dns server => reset to default
+                        while ((($rec = Resolve-DnsName -Name $dnsChallengeDN -Type TXT -Server $dnsServer -NoHostsFile -DnsOnly -ErrorAction SilentlyContinue) -eq $null -and ($Error|Select-Object -First 1).CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ResourceUnavailable) -or # NXDOMAIN
+                                ($rec -ne $null -and ([Object[]]($rec|? {$_ -is [Microsoft.DnsClient.Commands.DnsRecord_TXT] -and ($_.Text|select -First 1) -eq $KeyAuthorization})).Length -eq 0)) { # found TXT but not the right one
+                            Write-Host -NoNewline "." # show some progress
+                            Start-Sleep -Seconds 3 # be patient
+                        }
+                        Write-Host " "
+                    }
+                }
             }
             'tls-sni-01' {
                 [string] $sniAuthorization = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256Cng]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyAuthorization))).Replace('-','').ToLower()
@@ -1151,14 +1170,6 @@ Begin {
                     Write-Host "   $($KeyAuthorization)"
                     Write-Host " ! Once this is deployed, press Enter to continue"
                     Read-Host | Out-Null
-                    if ((Get-Command -Verb Resolve -Noun DnsName) -ne $null) {
-                        Write-Host "Testing DNS record"
-                        while (($rec = Resolve-DnsName -Name $FQDN -Type TXT -Server 8.8.8.8, 8.8.4.4 -NoHostsFile -DnsOnly) -eq $null -or -not ($rec |? {$_.Text -eq $KeyAuthorization})) {
-                            Write-Host -NoNewline "."
-                            sleep -Seconds 3
-                        }
-                        Write-Host " "
-                    }
                 }
             }
             if ($onChallengeCleanup -eq $null) {

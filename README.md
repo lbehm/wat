@@ -45,7 +45,7 @@ If you looking for a trustworthy slim acme client for linux/unix check out his w
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-Email <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01|tls-sni-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-AccountKeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-AutoFix] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-Email <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01|tls-sni-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-NoDnsTest] [-InternalAccountIdentifier <String>] [-AccountKeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-AutoFix] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 The script can take an array of domain names from piped input. Please have a look [at the examples](#examples).
 
@@ -123,6 +123,8 @@ Directory for account config and registration information
 Lockfile location, to prevent concurrent access
 ###### -NoLock
 Do not use lockfile (potentially dangerous!)
+###### -NoDnsTest
+Don't verify the DNS record after executing onChallenge (applies only to dns-01 challenges)
 ###### -ExportPassword `<SecureString>`
 Password to encrypt the exported certificate files (only applies to `-ExportPfx` and `-ExportPkcs12`)
 ###### -ExportPfx
