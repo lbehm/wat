@@ -94,12 +94,8 @@ Param (
     )]
     [String[]] $Domains,
 
-    # E-Mail to use during the registration (alias for -Contact ("mailto:<ContactEmail>"))
-    [String] $ContactEmail,
-
-    # Contact information to use during the registration (example: "mailto:me@example.com")
-    [Parameter(DontShow = $true)]
-    [String[]] $Contact,
+    # E-mail addresses that are linked to the account
+    [String[]] $Email,
     
     # Discards the ACME account key and performs a complete new account registration
     [Parameter(DontShow = $true)]
@@ -341,13 +337,6 @@ Begin {
                 $header.jwk.x = Encode-UrlBase64 -Bytes $export.Q.X
                 $header.jwk.y = Encode-UrlBase64 -Bytes $export.Q.Y
             }
-            "ECDSA_P521" {
-                $header.alg = "ES512"
-                $header.jwk.kty = "EC"
-                $header.jwk.crv = "P-521"
-                $header.jwk.x = Encode-UrlBase64 -Bytes $export.Q.X
-                $header.jwk.y = Encode-UrlBase64 -Bytes $export.Q.Y
-            }
         }
     
         if ($Nonce -ne "") { $header.nonce = $Nonce }
@@ -356,12 +345,10 @@ Begin {
     }
     function Get-JWSignature([String] $Value, [System.Security.Cryptography.AsymmetricAlgorithm] $PrivateKey = $AccountKey) {
         switch ($PrivateKey.Key.Algorithm.Algorithm) {
-            "RSA"        { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256 }
-            "ECDSA_P256" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA256 }
-            "ECDSA_P384" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA384 }
-            "ECDSA_P521" { [System.Security.Cryptography.HashAlgorithmName] $Algo = [System.Security.Cryptography.HashAlgorithmName]::SHA512 }
+            "RSA"        { Encode-UrlBase64 -Bytes ($PrivateKey.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)) }
+            "ECDSA_P256" { Encode-UrlBase64 -Bytes ($PrivateKey.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), [System.Security.Cryptography.HashAlgorithmName]::SHA256)) }
+            "ECDSA_P384" { Encode-UrlBase64 -Bytes ($PrivateKey.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), [System.Security.Cryptography.HashAlgorithmName]::SHA384)) }
         }
-        Encode-UrlBase64 -Bytes ($PrivateKey.SignData([System.Text.Encoding]::UTF8.GetBytes($Value), $Algo))
     }
     function Get-ACMEDirectory([uri] $Uri) {
         [hashtable] $Directory = @{
@@ -410,10 +397,6 @@ Begin {
                 $Size = 384
                 [type] $RetType = [System.Security.Cryptography.ECDsaCng]
             }
-            "ECDSA_P521" {
-                $Size = 521
-                [type] $RetType = [System.Security.Cryptography.ECDsaCng]
-            }
         }
         
         if ($ResetRegistration -and [System.Security.Cryptography.CngKey]::Exists($Name)) {
@@ -435,9 +418,8 @@ Begin {
         $export = $AccountKey.ExportParameters($false)
         switch ($AccountKey.Key.Algorithm.Algorithm) {
             "RSA"        { [string] $j = '{"e":"' + (Encode-UrlBase64 -Bytes $export.Exponent) + '","kty":"RSA","n":"' + (Encode-UrlBase64 -Bytes $export.Modulus) + '"}' }
-            "ECDSA_P256" { [string] $j = '{"crv":"P-256","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
-            "ECDSA_P384" { [string] $j = '{"crv":"P-384","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
-            "ECDSA_P521" { [string] $j = '{"crv":"P-521","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '", "y": "' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
+            "ECDSA_P256" { [string] $j = '{"crv":"P-256","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '","y":"' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
+            "ECDSA_P384" { [string] $j = '{"crv":"P-384","kty":"EC","x":"' + (Encode-UrlBase64 -Bytes $export.Q.X) + '","y":"' + (Encode-UrlBase64 -Bytes $export.Q.Y) + '"}' }
         }
         Encode-UrlBase64 -Bytes (([System.Security.Cryptography.SHA256Cng]::Create()).ComputeHash([System.Text.Encoding]::UTF8.GetBytes($j)))
     }
@@ -646,11 +628,11 @@ Begin {
             return Create-ACMERegistration
         }
 
-        # check $Contact for changes
-        if ($Contact -ne $null) {
+        # check $Email for changes
+        if ($Email -ne $null) {
             $config = Get-AccountConfig
-            if (-not (Compare-Lists $Contact $config.contact)) {
-                $config.contact = $Contact
+            if (-not (Compare-Lists $Email $config.contact)) {
+                $config.contact = $Email
                 return Update-ACMERegistration -Config $config
             }
         }
@@ -665,8 +647,8 @@ Begin {
 
             if ($Config -ne $null -and $Config.contact -ne $null) {
                 $req.contact = $Config.contact
-            } elseif ($Contact -ne $null) {
-                $req.contact = $Contact
+            } elseif ($Email -ne $null) {
+                $req.contact = $Email
             }
 
             $resp = Invoke-SignedWebRequest -Uri $Directory.newAccount -Resource new-reg -Payload $req
@@ -941,11 +923,6 @@ Begin {
                 $Size = 384
                 $HashAlgo = "SHA384"
             }
-            ([System.Security.Cryptography.CngAlgorithm]::ECDsaP521) {
-                $algoId.InitializeFromAlgorithmName(3 <#XCN_CRYPT_PUBKEY_ALG_OID_GROUP_ID#>, 0 <#XCN_CRYPT_OID_INFO_PUBKEY_ANY#>, 0 <#AlgorithmFlagsNone#>, "ECDSA_P521")
-                $Size = 521
-                $HashAlgo = "SHA512"
-            }
         }
         Write-Host " + Creating request: ExchangeAlgorithm: $($KeyAlgo.Algorithm), KeySize: $($Size), HashAlgorithm: $($HashAlgo), OCSP-MustStaple: $(if($OcspMustStaple){"On"}else{"Off"})"
 
@@ -1127,7 +1104,7 @@ Begin {
     }
     function Sign-CSR([String] $CSR) { [Convert]::ToBase64String((Invoke-SignedWebRequest -Uri $Directory.newOrder -Resource "new-cert" -Payload @{ "csr" = $CSR })) }
     
-    [string] $VERSION = "0.3.0.2"
+    [string] $VERSION = "0.3.0.3"
     # 1st level are huge api changes (i really don't know yet)
     # 2nd level are bigger internal changes - you may have to reassign your certificates in your ssl bindings
     # 3rd level are minor changes
@@ -1138,8 +1115,8 @@ Begin {
     Write-Host "[$($AppName)]"
 
     # Fixing input parameter
-    if ($ContactEmail -ne "" -and $Contact -eq $null) {
-        $Contact = ("mailto:$($ContactEmail)")
+    if ($Email -ne $null) {
+        $Email = $Email |? {$_ -is [string] -and $_ -ne ""} |% {"mailto:$($_)"}
     }
 
     if ($CA -eq $null) {
@@ -1251,7 +1228,6 @@ Begin {
                 switch ($key.crv) {
                     'P-256' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP256)}
                     'P-384' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP384)}
-                    'P-521' {[System.Security.Cryptography.AsymmetricAlgorithm] $AccountKey = Get-PrivateKey -Name $AccHash -Algorithm ([System.Security.Cryptography.CngAlgorithm]::ECDsaP521)}
                 }
             }
         }

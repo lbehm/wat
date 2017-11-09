@@ -29,21 +29,23 @@ You are good to go!
 Make sure your system is up to date and has at least PowerShell 4 installed!
 1. Find your PowerShell Version by executing `Get-Host` in a PowerShell Window.
 2. If the Version shows 4.0 or greater everything is fine and you should continue in the [examples section](#examples).
-3. If not (2.0 or 3.0) you should install /Windows Management Framework 4.0/. PowerShell 4.0 is part of it.
+3. If not (2.0 or 3.0) you should install *Windows Management Framework 4.0*. PowerShell 4.0 is part of it.
    1. Go to the [Windows Download page](https://www.microsoft.com/en-us/download/details.aspx?id=40855)
    2. Select your language, click Download
    3. Select `Windows6.1-KB2819745-x64-MultiPkg.msu` (on 64bit) or `Windows6.1-KB2819745-x86-MultiPkg.msu` (on 32bit Windows)
-   4. Search and Install Windows Updates!
+   4. Install the download.
+   5. Search and Install Windows Updates!
+
 Note: it isn't possible to export private keys of EC Certificates into Pem format on Windows 7 or Server 2012 R2
 
 ## Acknowledgement
 At this point I want to thank @lukas2511 for his fantastic work in [dehydrated](https://github.com/lukas2511/dehydrated):bangbang:\
-Without his inspirational masterpiece there would be no wat.ps1
+Without his inspirational masterpiece there would be no wat.ps1\
 If you looking for a trustworthy slim acme client for linux/unix check out his works!
 
 ## Syntax
 ```
-.\wat.ps1 [-Domains] <String[]> [-ContactEmail <String>] [-Contact <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01|tls-sni-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
+.\wat.ps1 [-Domains] <String[]> [-Email <String[]>] [-ResetRegistration] [-RenewRegistration] [-RenewCertificate] [-RecreateCertificate] [-RenewPrivateKey] [-OcspMustStaple] [-CA <Uri>] [-AcceptTerms] [-Staging] [-KeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-KeySize [2048|4096]] [-RenewDays <Int32>] [-ChallengeType [http-01|dns-01|tls-sni-01]] [-ACMEVersion [acme1-boulder|acme2-boulder|acme1]] [-BaseDir <DirectoryInfo>] [-CertDir <DirectoryInfo>] [-AccountDir <DirectoryInfo>] [-WellKnown <DirectoryInfo>] [-LockFile <FileInfo>] [-NoLock] [-ExportPassword <SecureString>] [-ExportPfx] [-ExportPkcs12] [-ExportCert] [-ExportPem] [-ExportPemCert] [-ExportPemKey] [-ExportIssuerPem] [-ExportPemEncoding [ASCII|UTF8|UTF32|Unicode|...]] [-onChallenge <ScriptBlock>] [-onChallengeCleanup <ScriptBlock>] [-InternalAccountIdentifier <String>] [-AccountKeyAlgo [Rsa|ECDSA_P256|ECDSA_P384]] [-AutoFix] [-Context {CurrentUser | LocalMachine}] [<CommonParameters>]
 ```
 The script can take an array of domain names from piped input. Please have a look [at the examples](#examples).
 
@@ -54,15 +56,38 @@ Get-Help .\wat.ps1 -Full
 ```
 
 ## Parameter
+### Mandatory Parameter
 ###### -Domains `<String[]>`
 Specify a list of domain names.
 The first is used as CommonName of your certificate.
 Every domain name is added as SubjectAlternateName (SAN).
 The Domains parameter can also be provided as piped input. Please be sure to define arrays of string arrays in this case.
-###### -ContactEmail `<String>`
-E-Mail to use during the registration (alias for `-Contact ("mailto:<ContactEmail>")`)
-###### -Contact `<String[]>`
-Contact information to use during the registration (example: `"mailto:me@example.com"`)
+### Recomended Parameter
+###### -Email `<String[]>`
+E-mail addresses that are linked to the account
+###### -AcceptTerms
+Accept CAs terms of service
+###### -Staging
+Using the staging environment of Let'sEncrypt if `-CA` isn't specified
+###### -Context `[CurrentUser|LocalMachine]`
+The place to save the certificate and keys
+###### -WellKnown `<DirectoryInfo>`
+Output directory for challenge-tokens to be served by webserver or deployed in `-onChallenge`
+###### -ChallengeType `[http-01|dns-01|tls-sni-01]`
+Which challenge should be used? (default: `http-01`)
+###### -AutoFix
+Try to fix common problems automatically.\
+This includes:
+- Creating new account with existing configuration if AccountKey is missing (this overwrites account id/data)
+- Creating or updating registration without E-mail addresses if addresses aren't valid anymore (You will not receive notifications!)
+###### -onChallenge `<ScriptBlock>`
+Script to be invoked with challenge token receiving the following parameter:
+    Domain                         The domain name you want to verify
+    Token / FQDN                   The file name for http-01 or domain name for dns-01 and tls-sni-01 challenges
+    KeyAuthorization / Certificate The value you have to place in the file or dns TXT record or the Certificate for tls-sni-01 challenges
+###### -onChallengeCleanup `<ScriptBlock>`
+Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
+### Advanced Parameter
 ###### -ResetRegistration
 Discards the ACME account key and performs a complete new account registration
 ###### -RenewRegistration
@@ -77,10 +102,8 @@ Regenerate private keys instead of just signing new certificates on renewal
 Adding CSR feature indicating that OCSP stapling should be mandatory
 ###### -CA `<Uri>`
 Path to certificate authority (default: https://acme-v01.api.letsencrypt.org/directory)
-###### -AcceptTerms
-Accept CAs terms of service
-###### -Staging
-Using the staging environment of Let'sEncrypt if `-CA` isn't specified
+###### -AccountKeyAlgo `[Rsa|ECDSA_P256|ECDSA_P384]`
+Which algorithm should be used for the ACME account key?
 ###### -KeyAlgo `[Rsa|ECDSA_P256|ECDSA_P384]`
 Which algorithm should be used?
 ###### -KeySize `[2048|4096]`
@@ -88,8 +111,6 @@ Size of rsa keys (default: `4096`)\
 Possible values are between 2048 and 4096 and a multiple of 64 (e.g. 3072 is possible)
 ###### -RenewDays `<Int32>`
 Minimum days before expiration to automatically renew certificate (default: `30`)
-###### -ChallengeType `[http-01|dns-01|tls-sni-01]`
-Which challenge should be used? (default: `http-01`)
 ###### -ACMEVersion `[acme1-boulder|acme2-boulder|acme1]`
 Currently only acme1-boulder dialect is tested
 ###### -BaseDir `<DirectoryInfo>`
@@ -98,8 +119,6 @@ Base directory for account config and generated certificates
 Output directory for generated certificates
 ###### -AccountDir `<DirectoryInfo>`
 Directory for account config and registration information
-###### -WellKnown `<DirectoryInfo>`
-Output directory for challenge-tokens to be served by webserver or deployed in `-onChallenge`
 ###### -LockFile `<FileInfo>`
 Lockfile location, to prevent concurrent access
 ###### -NoLock
@@ -121,21 +140,8 @@ Export the private key in Base64 encoded PEM format (Warning: private key is NOT
 ###### -ExportIssuerPem
 Export the certificate of the Issuer (e.g. Let'sEncrypt) in Base64 encoded PEM format
 ###### -ExportPemEncoding `[ASCII|UTF8|UTF32|Unicode|...]`
-###### -onChallenge `<ScriptBlock>`
-Script to be invoked with challenge token receiving the following parameter:
-    Domain                         The domain name you want to verify
-    Token / FQDN                   The file name for http-01 or domain name for dns-01 and tls-sni-01 challenges
-    KeyAuthorization / Certificate The value you have to place in the file or dns TXT record or the Certificate for tls-sni-01 challenges
-###### -onChallengeCleanup `<ScriptBlock>`
-Script to be invoked after completing the challenge receiving the same parameter as -onChallenge with the addition of the response status 'valid' or 'invalid' as 4th parameter
 ###### -InternalAccountIdentifier `<String>`
 Internal identifier of the ACME account
-###### -AutoFix
-Try to fix common problems automatically.\
-This includes:
-- Creating new account with existing configuration if AccountKey is missing (this overwrites account id/data)
-###### -Context `[CurrentUser|LocalMachine]`
-The place to save the certificate and keys
 
 ## Examples
 ```ps
