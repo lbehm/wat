@@ -885,7 +885,7 @@ Begin {
                         [string[]] $dnsServer = '8.8.8.8', '8.8.4.4' # use public servers
                         if (($rec = Resolve-DnsName -Name $dnsChallengeDN -Type TXT -Server $dnsServer -NoHostsFile -DnsOnly -ErrorAction SilentlyContinue) -eq $null -and ($Error|Select-Object -First 1).CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::OperationTimeout) {$dnsServer = @()} # can't reach dns server => reset to default
                         while ((($rec = Resolve-DnsName -Name $dnsChallengeDN -Type TXT -Server $dnsServer -NoHostsFile -DnsOnly -ErrorAction SilentlyContinue) -eq $null -and ($Error|Select-Object -First 1).CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ResourceUnavailable) -or # NXDOMAIN
-                                ($rec -ne $null -and ([Object[]]($rec|? {$_ -is [Microsoft.DnsClient.Commands.DnsRecord_TXT] -and ($_.Text|select -First 1) -eq $KeyAuthorization})).Length -eq 0)) { # found TXT but not the right one
+                                ($rec -ne $null -and (($rec = $rec|? {$_ -is [Microsoft.DnsClient.Commands.DnsRecord_TXT]}|% {$_.Text}|? {$_ -eq $dnsAuthorization}) -eq $null -or $rec.Length -eq 0))) { # found TXT but not the right one
                             Write-Host -NoNewline "." # show some progress
                             Start-Sleep -Seconds 3 # be patient
                         }

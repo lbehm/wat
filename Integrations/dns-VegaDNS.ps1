@@ -91,12 +91,14 @@ function Add-VDNSRecord ([string] $Zone, [string] $Name, [string] $Type = "A", [
     } | Out-Null
 }
 function Remove-VDNSRecord ([Parameter(ValueFromPipelineByPropertyName)][string] $Zone, [Parameter(ValueFromPipelineByPropertyName)][int] $RecordId, [Parameter(ValueFromPipelineByPropertyName)][psobject] $Session = (Get-VDNSSession)) {
-    Invoke-WebRequest -UseBasicParsing -Uri $Session.BaseURI -Method Post -Body @{
-        VDNSSessid = $Session.SessionId;
-        domain = $Zone;
-        state = "logged_in";
-        mode = "records";
-        record_mode = "delete_now";
-        record_id = $RecordId;
-    } | Out-Null
+    Process {
+        Invoke-WebRequest -UseBasicParsing -Uri $Session.BaseURI -Method Post -Body @{
+            VDNSSessid = $Session.SessionId;
+            domain = $Zone;
+            state = "logged_in";
+            mode = "records";
+            record_mode = "delete_now";
+            record_id = $RecordId;
+        } | Out-Null
+    }
 }
