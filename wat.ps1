@@ -239,7 +239,9 @@ Begin {
                 }
                 $FullDescription += "`n$($Exception.InvocationInfo.PositionMessage)"
                 $FullDescription += "`nCategoryInfo: $($Exception.CategoryInfo.GetMessage())"
-                $FullDescription += "`nStackTrace:`n$($Exception.ScriptStackTrace)"
+                if ($Exception.PSObject.Members['ScriptStackTrace'] -ne $null) {
+                    $FullDescription += "`nStackTrace:`n$($Exception.ScriptStackTrace)"
+                }
                 $FullDescription += "`n$($Exception.Exception.StackTrace)"
             }
             Write-Eventlog -EntryType $EntryType -LogName $LogName -Source $Source -Category $Category -EventId $EventId -Message $FullDescription
@@ -254,7 +256,7 @@ Begin {
     }
     trap [Exception] { die -Exception $_ }
     Set-PSDebug -Strict
-    Set-StrictMode -Version 4
+    Set-StrictMode -Version 2
     $ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
     $Error.Clear()
     
@@ -270,7 +272,7 @@ Begin {
         }
     }
     function Remove-Lock([System.IO.FileInfo] $Path = $LockFile) {
-        if ($NoLock) { return }
+        if ($NoLock -or !$Path.Exists) { return }
         Remove-Item $Path
     }
     function Invoke-SignedWebRequest([uri] $Uri, [Microsoft.PowerShell.Commands.WebRequestMethod] $Method = [Microsoft.PowerShell.Commands.WebRequestMethod]::Post, [String] $Resource, [hashtable] $Payload) {
@@ -1122,6 +1124,11 @@ Begin {
     [string] $UserAgent = "$AppName (ACME 1.0)"
 
     Write-Host "[$($AppName)]"
+
+    # Requirements
+    if (("System.Security.Cryptography.RSACng" -as [type]) -eq $null) {
+        die -Message "RSACng is missing on your system. Please install .NET 4.6"
+    }
 
     # Fixing input parameter
     if ($Email -ne $null) {
