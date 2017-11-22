@@ -98,29 +98,24 @@ Param (
     [String[]] $Email,
     
     # Discards the ACME account key and performs a complete new account registration
-    [Parameter(DontShow = $true)]
     [Switch] $ResetRegistration,
     
     # Force update of the account information (maybe you fiddled with the account.json file)
-    [Parameter(DontShow = $true)]
     [Switch] $RenewRegistration,
     
     # Force renew of certificate even if it is longer valid than value in RenewDays
     [Switch] $RenewCertificate,
     
     # Create complete new private key and certificate
-    [Parameter(DontShow = $true)]
     [Switch] $RecreateCertificate,
     
     # Regenerate private keys instead of just signing new certificates on renewal
-    [Parameter(DontShow = $true)]
     [Switch] $RenewPrivateKey,
     
     # Adding CSR feature indicating that OCSP stapling should be mandatory
     [Switch] $OcspMustStaple,
 
     # Path to certificate authority (default: https://acme-v01.api.letsencrypt.org/directory)
-    [Parameter(DontShow = $true)]
     [uri] $CA,
 
     # Accept CAs terms of service
@@ -146,34 +141,29 @@ Param (
     [String] $ChallengeType = "http-01",
 
     # Currently only acme1-boulder dialect is tested
-    [Parameter(DontShow = $true)]
     [ValidateSet("acme1-boulder", "acme2-boulder", "acme1")]
     [String] $ACMEVersion = "acme1-boulder",
     
     # Base directory for account config and generated certificates
-    [Parameter(DontShow = $true)]
     [System.IO.DirectoryInfo] $BaseDir = (Split-Path -Parent $MyInvocation.MyCommand.Definition),
     
     # Output directory for generated certificates
-    [Parameter(DontShow = $true)]
     [System.IO.DirectoryInfo] $CertDir = "$BaseDir\Certs",
     
     # Directory for account config and registration information
-    [Parameter(DontShow = $true)]
     [System.IO.DirectoryInfo] $AccountDir = "$BaseDir\Accounts",
     
     # Output directory for challenge-tokens to be served by webserver or deployed in -onChallenge
     [System.IO.DirectoryInfo] $WellKnown = "C:\inetpub\wwwroot\.well-known\acme-challenge",
     
     # Lockfile location, to prevent concurrent access
-    [Parameter(DontShow = $true)]
     [System.IO.FileInfo] $LockFile = "$BaseDir\lock",
     
     # Don't use lockfile (potentially dangerous!)
     [Switch] $NoLock,
 
     # Password to encrypt the exported certificate files (only applies to -ExportPfx and -ExportPkcs12)
-    [securestring] $ExportPassword = (new-object System.Security.SecureString),
+    [Security.SecureString] $ExportPassword = (new-object System.Security.SecureString),
 
     # Export the certificate in PFX format (please use -ExportPassword)
     [Switch] $ExportPfx,
@@ -209,15 +199,12 @@ Param (
     [System.Management.Automation.ScriptBlock] $onChallengeCleanup,
 
     # Don't verify the DNS record after executing onChallenge (applies only to dns-01 challenges)
-    [Parameter(DontShow = $true)]
     [switch] $NoDnsTest,
     
     # Internal identifier of the ACME account
-    [Parameter(DontShow = $true)]
     [String] $InternalAccountIdentifier = "ACMEDefaultAccount",
     
     # Which algorithm should be used for the ACME account key?
-    [Parameter(DontShow = $true)]
     [ValidateSet("Rsa", "ECDSA_P256", "ECDSA_P384")]
     [System.Security.Cryptography.CngAlgorithm] $AccountKeyAlgo = [System.Security.Cryptography.CngAlgorithm]::Rsa,
 
@@ -596,15 +583,18 @@ Begin {
             [int] $req = 0
             [int] $t = $Length
             while ($t -gt 0) {
-                $t = $t -shr 8
+                $t = Shift-Right $t 8
                 $req++
             }
             [byte[]] $ret = (([byte]$req) -bor 0x80)
             for ([int] $i = $req -1; $i -ge 0; $i--) {
-                $ret += [byte]($Length -shr (8*$i) -band 0xff)
+                $ret += [byte]((Shift-Right $Length (8*$i)) -band 0xff)
             }
         }
         $ret
+    }
+    function Shift-Right([int] $Value, [int]$Count = 1) {
+        [math]::Floor($Value * [math]::Pow(2, $Count * -1))
     }
     function Get-AccountConfig {
         Get-Content -Path $AccountConfig | ConvertFrom-Json | ConvertTo-Hashtable
