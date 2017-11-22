@@ -272,8 +272,8 @@ Begin {
         }
     }
     function Remove-Lock([System.IO.FileInfo] $Path = $LockFile) {
-        if ($NoLock -or !$Path.Exists) { return }
-        Remove-Item $Path
+        if ($NoLock) { return }
+        Remove-Item $Path -ErrorAction SilentlyContinue
     }
     function Invoke-SignedWebRequest([uri] $Uri, [Microsoft.PowerShell.Commands.WebRequestMethod] $Method = [Microsoft.PowerShell.Commands.WebRequestMethod]::Post, [String] $Resource, [hashtable] $Payload) {
         $Payload.resource = $Resource
