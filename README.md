@@ -184,3 +184,24 @@ C:\Scripts\wat\wat.ps1 -Domains "example.com" -WellKnown C:\inetpub\well-known\a
 This is my entire config (as scheduled task) to update the SMTP Certificate in one of my ExchangeServers.\
 After the initial set up and binding of the Certificat to the SMTP service (e.g. in the ECP GUI), I don't have to update any ExchangeServer configuration every time the certificate is renewed.\
 That's what I call In-Place-Renewal - I didn't find anything on the web to this mechanism.
+
+```ps
+.\wat.ps1 -Domains "example.com" -ChallengeType tls-sni-01 -Context LocalMachine -Staging -onChallenge {
+    Param([String] $Domain, [String] $FQDN, [Security.Cryptography.X509Certificates.X509Certificate2] $Cert)
+    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    if (!(Get-Module WebAdministration) ) { throw "Couldn't load WebAdministration module" }
+    # Remove old entries
+    Get-WebBinding -Protocol https -Port 443 -HostHeader $FQDN -IPAddress '*' | Remove-WebBinding
+    Get-Item "IIS:\SslBindings\*!443!$($FQDN)" -ErrorAction SilentlyContinue | Remove-Item
+    # Create new bindings
+    New-WebBinding -IPAddress "*" -Port 443 -HostHeader $FQDN -Protocol https -SslFlags 1 -Name "Default Web Site"
+    New-Item "IIS:\SslBindings\*!443!$($FQDN)" -Thumbprint $($Cert.Thumbprint) -SSLFlags 1 | Out-Null
+} -onChallengeCleanup {
+    Param([String] $Domain, [String] $FQDN, [Security.Cryptography.X509Certificates.X509Certificate2] $Cert)
+    # Remove bindings
+    Get-WebBinding -Protocol https -Port 443 -HostHeader $FQDN -IPAddress '*' | Remove-WebBinding
+    Get-Item "IIS:\SslBindings\*!443!$($FQDN)" -ErrorAction SilentlyContinue | Remove-Item
+}
+```
+This is a working implementation of tls-sni-01 challenges in IIS. You may have to change it to match the name of your default web site.
+As in the example above, you have to set up a binding of the new Certificat in the IIS GUI.
