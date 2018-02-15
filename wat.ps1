@@ -761,8 +761,11 @@ Begin {
         $Object.psobject.Properties|% -Begin {[hashtable] $h = @{}} -Process { $h[$_.Name] = $_.Value } -End { $h }
     }
     function Compare-Lists([array] $a = $null, [array] $b = $null) {
-        if ($a -eq $null -and $b -eq $null) { return $true } # boath are $null
+        if ($a -eq $null -and $b -eq $null) { return $true } # both are $null
         if ($a -eq $null -or $b -eq $null) { return $false } # only one of them $null?
+
+        $a = $a|% {return $_.ToLower()}
+        $b = $b|% {return $_.ToLower()}
 
         if ($a.Count -ne $b.Count) { return $false }
         for ([int] $i = 0; $i -lt $a.Count; $i++) {
